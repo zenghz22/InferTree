@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>InferTree · 树状推理</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #1a1d27; --border: #2a2e3b; --text: #e6e8ee;
+    --muted: #8b90a0; --accent: #6c8cff; --user: #2d3550; --assistant: #21242f;
+    --node: #232734; --node-sel: #34406b; --line: #3a4154; --line-sel: #6c8cff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; z-index: 5;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .spacer { flex: 1; }
+  button, input, select, textarea {
+    font-family: inherit; font-size: 13px; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px;
+  }
+  button { cursor: pointer; background: var(--panel); transition: background .15s; }
+  button:hover { background: #2a2e3b; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .hint { font-size: 12px; color: var(--muted); }
+  .err { color: #ff7a7a; }
+
+  #settings { display: none; flex-direction: column; gap: 10px; padding: 14px;
+    background: var(--panel); border-bottom: 1px solid var(--border); z-index: 5; }
+  #settings.open { display: flex; }
+  #settings label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  #settings .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  #settings .row > label { flex: 1; min-width: 180px; }
+
+  .main { flex: 1; display: flex; min-height: 0; }
+
+  /* 树画布 */
+  #treeWrap { flex: 1; position: relative; overflow: hidden; background:
+    radial-gradient(circle at 1px 1px, #20242f 1px, transparent 0) 0 0 / 26px 26px, var(--bg);
+    cursor: grab; }
+  #treeWrap.panning { cursor: grabbing; }
+  #treeCanvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  #edges { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+  .node {
+    position: absolute; width: 170px; min-height: 46px; padding: 8px 10px;
+    background: var(--node); border: 1px solid var(--border); border-radius: 10px;
+    display: flex; flex-direction: column; gap: 3px; cursor: pointer; user-select: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,.25); transition: border-color .12s, background .12s;
+  }
+  .node:hover { border-color: var(--accent); }
+  .node.sel { background: var(--node-sel); border-color: var(--accent); }
+  .node.root { background: #2a2233; border-color: #6b4f8a; }
+  .node .nt { font-size: 13px; font-weight: 600; line-height: 1.3; }
+  .node .nmeta { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .node .collapse { position: absolute; right: -11px; top: 50%; transform: translateY(-50%);
+    height: 22px; min-width: 22px;
+    padding: 0 5px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border);
+    color: var(--muted); font-size: 11px; line-height: 1; display: flex; align-items: center;
+    justify-content: center; font-weight: 600; }
+  .node .collapse:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .node.collapsed { border-style: dashed; }
+  .node.streaming { border-color: var(--accent); }
+  .node.streaming .nt::before { content: ''; display: inline-block; width: 10px; height: 10px;
+    border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .8s linear infinite; margin-right: 6px; vertical-align: -1px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #viewControls { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 6px; z-index: 4; }
+
+  /* 拖拽分隔条 */
+  #resizer { width: 6px; flex-shrink: 0; cursor: col-resize; background: var(--border);
+    transition: background .12s; }
+  #resizer:hover, #resizer.active { background: var(--accent); }
+
+  /* 会话侧栏 */
+  #side { width: 380px; flex-shrink: 0; background: var(--panel);
+    display: flex; flex-direction: column; min-height: 0; }
+  #convoHead { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  #convoHead b { color: var(--accent); }
+  #nodeActions { display: flex; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+  #nodeActions button { font-size: 12px; padding: 5px 10px; }
+  #nodeActions button.warn { background: #b23b3b; border-color: #b23b3b; color: #fff; }
+  #nodeActions button:disabled { opacity: .4; }
+  #convo { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { padding: 9px 12px; border-radius: 9px; white-space: pre-wrap; word-wrap: break-word;
+    line-height: 1.5; font-size: 14px; max-width: 100%; }
+  .msg .role { font-size: 10px; color: var(--muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .4px; }
+  .msg.user { background: var(--user); align-self: flex-end; }
+  .msg.assistant { background: var(--assistant); border: 1px solid var(--border); align-self: flex-start; }
+  .msg.system { background: #2a2233; border: 1px solid #6b4f8a; align-self: stretch; }
+  /* Markdown 渲染样式（限定在回答气泡内） */
+  .msg .c > *:first-child { margin-top: 0; }
+  .msg .c > *:last-child { margin-bottom: 0; }
+  .msg .c p { margin: 6px 0; }
+  .msg .c h1, .msg .c h2, .msg .c h3, .msg .c h4 { margin: 12px 0 6px; line-height: 1.3; }
+  .msg .c h1 { font-size: 18px; } .msg .c h2 { font-size: 16px; } .msg .c h3 { font-size: 15px; }
+  .msg .c ul, .msg .c ol { margin: 6px 0; padding-left: 22px; }
+  .msg .c li { margin: 3px 0; }
+  .msg .c code { background: #0f1117; border: 1px solid var(--border); border-radius: 4px;
+    padding: 1px 5px; font-family: Consolas, "Courier New", monospace; font-size: 13px; }
+  .msg .c pre { background: #0f1117; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; overflow-x: auto; margin: 8px 0; }
+  .msg .c pre code { background: none; border: none; padding: 0; }
+  .msg .c blockquote { margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--accent); color: var(--muted); }
+  .msg .c table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+  .msg .c th, .msg .c td { border: 1px solid var(--border); padding: 5px 9px; }
+  .msg .c th { background: #0f1117; }
+  .msg .c a { color: var(--accent); }
+  .msg .c hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+  .msg .c img { max-width: 100%; border-radius: 6px; }
+  .msg .reason { margin-bottom: 8px; border-left: 2px solid var(--accent); }
+  .msg .reason summary { cursor: pointer; font-size: 12px; color: var(--accent); padding: 2px 0 2px 8px; }
+  .msg .reason .rc { font-size: 12px; color: var(--muted); white-space: pre-wrap;
+    line-height: 1.45; padding: 6px 0 4px 8px; max-height: 280px; overflow-y: auto; }
+  .msg .snote { font-size: 12px; color: #7fb3ff; margin-bottom: 6px;
+    background: #18233a; border: 1px solid #2c4068; border-radius: 6px; padding: 4px 8px; }
+  #composer { border-top: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  #composer .clabel { font-size: 12px; color: var(--muted); }
+  #composer .row { display: flex; gap: 8px; align-items: flex-end; }
+  #input { flex: 1; resize: none; min-height: 42px; max-height: 160px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<header>
+  <h1>InferTree</h1>
+  <span class="hint" id="status">未配置</span>
+  <span class="spacer"></span>
+  <button id="newTreeBtn">新建树</button>
+  <button id="exportMd">导出当前路径(MD)</button>
+  <button id="exportJson">导出全树(JSON)</button>
+  <button id="importBtn">导入JSON</button>
+  <input id="importFile" type="file" accept="application/json" style="display:none" />
+  <button id="toggleSettings">设置</button>
+</header>
+
+<div id="settings">
+  <div class="row">
+    <label>Base URL（到 /v1）
+      <input id="baseUrl" placeholder="https://api.openai.com/v1" />
+    </label>
+    <label>模型名
+      <input id="model" placeholder="gpt-4o-mini" />
+    </label>
+  </div>
+  <label>API Key（仅存本机浏览器 localStorage）
+    <input id="apiKey" type="password" placeholder="sk-..." />
+  </label>
+  <label>System Prompt（作为根节点内容，可空）
+    <textarea id="systemPrompt" rows="2" placeholder="你是一个有帮助的助手。"></textarea>
+  </label>
+  <div class="row" style="align-items:flex-end">
+    <label style="flex:0 0 auto; flex-direction:row; align-items:center; gap:6px;">
+      <input id="thinkOn" type="checkbox" style="width:auto" /> 深度思考模式（DeepSeek thinking）
+    </label>
+    <label style="flex:0 0 auto;">推理强度 effort
+      <select id="thinkEffort">
+        <option value="high">high</option>
+        <option value="max">max</option>
+      </select>
+    </label>
+  </div>
+  <div class="row" style="align-items:flex-end">
+    <label style="flex:0 0 auto; flex-direction:row; align-items:center; gap:6px;">
+      <input id="webOn" type="checkbox" style="width:auto" /> 联网搜索（模型自动决定是否搜索）
+    </label>
+    <label style="flex:1; min-width:200px;">Tavily API Key（tvly-...）
+      <input id="tavilyKey" type="password" placeholder="tvly-..." />
+    </label>
+  </div>
+  <div class="hint">设置自动保存。深度思考仅对支持的模型（如 deepseek-v4-pro）生效，会在回答前展示"思考过程"。联网搜索通过 function calling 实现：模型需要实时信息时会自动调用搜索，由浏览器请求 Tavily 并把结果喂回模型。修改 System Prompt 后失焦会更新根节点并重新生成其标题。</div>
+</div>
+
+<div class="main">
+  <div id="treeWrap">
+    <div id="treeCanvas">
+      <svg id="edges"></svg>
+    </div>
+    <div id="viewControls">
+      <button id="zoomIn">＋</button>
+      <button id="zoomOut">－</button>
+      <button id="fitView">适应视图</button>
+    </div>
+  </div>
+
+  <div id="resizer"></div>
+
+  <div id="side">
+    <div id="convoHead">当前路径：<span id="pathLabel">—</span></div>
+    <div id="nodeActions">
+      <button id="regenBtn">重新回答</button>
+      <button id="delBtn">删除节点</button>
+    </div>
+    <div id="convo"></div>
+    <div id="composer">
+      <div class="clabel" id="branchLabel">从 <b>根</b> 继续提问（将创建新分支）</div>
+      <div class="row">
+        <textarea id="input" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="sendBtn" class="primary">发送</button>
+        <button id="stopBtn" disabled>停止</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const els = {
+  baseUrl: $('baseUrl'), model: $('model'), apiKey: $('apiKey'), system: $('systemPrompt'),
+  thinkOn: $('thinkOn'), thinkEffort: $('thinkEffort'),
+  webOn: $('webOn'), tavilyKey: $('tavilyKey'),
+  status: $('status'), settings: $('settings'),
+  wrap: $('treeWrap'), canvas: $('treeCanvas'), svg: $('edges'),
+  convo: $('convo'), pathLabel: $('pathLabel'), branchLabel: $('branchLabel'),
+  input: $('input'), send: $('sendBtn'), stop: $('stopBtn'),
+  regen: $('regenBtn'), del: $('delBtn'),
+};
+
+/* ===================== 配置 ===================== */
+function loadCfg() {
+  els.baseUrl.value = localStorage.getItem('baseUrl') || 'https://api.openai.com/v1';
+  els.model.value   = localStorage.getItem('model')   || 'gpt-4o-mini';
+  els.apiKey.value  = localStorage.getItem('apiKey')  || '';
+  els.system.value  = localStorage.getItem('systemPrompt') || '';
+  els.thinkOn.checked = localStorage.getItem('thinkOn') === '1';
+  els.thinkEffort.value = localStorage.getItem('thinkEffort') || 'high';
+  els.webOn.checked = localStorage.getItem('webOn') === '1';
+  els.tavilyKey.value = localStorage.getItem('tavilyKey') || '';
+  updateStatus();
+}
+function saveCfg() {
+  localStorage.setItem('baseUrl', els.baseUrl.value.trim());
+  localStorage.setItem('model', els.model.value.trim());
+  localStorage.setItem('apiKey', els.apiKey.value.trim());
+  localStorage.setItem('systemPrompt', els.system.value);
+  localStorage.setItem('thinkOn', els.thinkOn.checked ? '1' : '0');
+  localStorage.setItem('thinkEffort', els.thinkEffort.value);
+  localStorage.setItem('webOn', els.webOn.checked ? '1' : '0');
+  localStorage.setItem('tavilyKey', els.tavilyKey.value.trim());
+  updateStatus();
+}
+function updateStatus() {
+  els.status.textContent = els.apiKey.value && els.baseUrl.value
+    ? `就绪 · ${els.model.value || '?'}` : '未配置（点右上角"设置"）';
+}
+[els.baseUrl, els.model, els.apiKey, els.tavilyKey].forEach(el => el.addEventListener('input', saveCfg));
+[els.thinkOn, els.thinkEffort, els.webOn].forEach(el => el.addEventListener('change', saveCfg));
+els.system.addEventListener('input', saveCfg);
+els.system.addEventListener('change', () => {            // 失焦：把 system 写进根节点
+  const root = nodes[rootId];
+  if (root) { root.content = els.system.value.trim(); saveTree(); genTitle(root); renderAll(); }
+});
+
+/* ===================== 树数据 ===================== */
+// node: { id, parentId, query, content, title, children:[ids], createdAt }
+//   边(query)=用户请求；节点(content)=模型回答；根节点 content=system prompt
+let nodes = {}, rootId = null, selectedId = null;
+let streamingId = null;    // 当前正在流式生成的节点 id（同一时刻仅一个）
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 10));
+
+function saveTree() {
+  localStorage.setItem('tree', JSON.stringify({ nodes, rootId, selectedId }));
+}
+function newTree() {
+  nodes = {}; rootId = uid();
+  nodes[rootId] = { id: rootId, parentId: null, query: null,
+    content: els.system.value.trim(), title: '开始', children: [], createdAt: Date.now() };
+  selectedId = rootId; saveTree();
+  if (nodes[rootId].content) genTitle(nodes[rootId]);
+}
+function loadTree() {
+  const s = JSON.parse(localStorage.getItem('tree') || 'null');
+  if (s && s.rootId && s.nodes) { nodes = s.nodes; rootId = s.rootId; selectedId = s.selectedId || rootId; }
+  else newTree();
+}
+function pathTo(id) {            // 根 → id 的节点数组
+  const arr = []; let cur = id;
+  while (cur) { arr.unshift(nodes[cur]); cur = nodes[cur].parentId; }
+  return arr;
+}
+function buildMessages(targetId, extraQuery) {  // 拼出发给模型的 messages
+  const path = pathTo(targetId);
+  const msgs = [];
+  const root = path[0];
+  if (root.content) msgs.push({ role: 'system', content: root.content });
+  for (let i = 1; i < path.length; i++) {
+    msgs.push({ role: 'user', content: path[i].query });
+    if (path[i].content) msgs.push({ role: 'assistant', content: path[i].content });
+  }
+  if (extraQuery != null) msgs.push({ role: 'user', content: extraQuery });
+  return msgs;
+}
+
+/* ===================== 树状布局 ===================== */
+const NW = 170, NH = 46, COLW = 250, ROW = 70, MX = 40, MY = 40;
+// 折叠时把子节点视为不存在；叶子=可见叶
+function layout() {
+  let leaf = 0;
+  (function assign(id, depth) {
+    const n = nodes[id]; n._d = depth;
+    const kids = n.collapsed ? [] : n.children;
+    if (kids.length === 0) { n._r = leaf++; }
+    else {
+      kids.forEach(k => assign(k, depth + 1));
+      n._r = (nodes[kids[0]]._r + nodes[kids[kids.length - 1]]._r) / 2;
+    }
+  })(rootId, 0);
+  const vis = new Set();
+  (function walk(id) { vis.add(id); if (!nodes[id].collapsed) nodes[id].children.forEach(walk); })(rootId);
+  let maxX = 0, maxY = 0;
+  vis.forEach(id => {
+    const n = nodes[id];
+    n.x = MX + n._d * COLW; n.y = MY + n._r * ROW;
+    maxX = Math.max(maxX, n.x + NW); maxY = Math.max(maxY, n.y + NH);
+  });
+  return { w: maxX + MX, h: maxY + MY, vis };
+}
+function countDesc(id) { let c = 0; (function r(i) { for (const k of nodes[i].children) { c++; r(k); } })(id); return c; }
+function isDescendant(ancestorId, id) {
+  let cur = nodes[id]?.parentId;
+  while (cur) { if (cur === ancestorId) return true; cur = nodes[cur].parentId; }
+  return false;
+}
+
+function renderTree() {
+  const { w, h, vis } = layout();
+  els.svg.setAttribute('width', w); els.svg.setAttribute('height', h);
+  els.canvas.style.width = w + 'px'; els.canvas.style.height = h + 'px';
+  const selPath = new Set(pathTo(selectedId).map(n => n.id));
+
+  // 边（仅可见父-可见子）
+  let paths = '';
+  vis.forEach(id => {
+    const n = nodes[id];
+    if (n.parentId == null || !vis.has(n.parentId)) return;
+    const p = nodes[n.parentId];
+    const x1 = p.x + NW, y1 = p.y + NH / 2, x2 = n.x, y2 = n.y + NH / 2;
+    const mx = (x1 + x2) / 2;
+    const on = selPath.has(n.id) && selPath.has(p.id);
+    paths += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none"
+      stroke="${on ? 'var(--line-sel)' : 'var(--line)'}" stroke-width="${on ? 2.5 : 1.5}"/>`;
+    const q = (n.query || '').slice(0, 14) + ((n.query || '').length > 14 ? '…' : '');
+    if (q) paths += `<text x="${mx}" y="${(y1 + y2) / 2 - 5}" fill="var(--muted)"
+      font-size="11" text-anchor="middle">${escapeXml(q)}</text>`;
+  });
+  els.svg.innerHTML = paths;
+
+  // 节点（仅可见）
+  els.canvas.querySelectorAll('.node').forEach(e => e.remove());
+  vis.forEach(id => {
+    const n = nodes[id];
+    const hasKids = n.children.length > 0;
+    const d = document.createElement('div');
+    d.className = 'node' + (n.id === rootId ? ' root' : '') + (n.id === selectedId ? ' sel' : '')
+      + (n.collapsed ? ' collapsed' : '') + (n.id === streamingId ? ' streaming' : '');
+    d.style.left = n.x + 'px'; d.style.top = n.y + 'px';
+    d.dataset.node = n.id;
+    const meta = n.id === rootId ? (n.content ? 'system' : '空根节点')
+      : (n.content ? n.content.slice(0, 30) : '…');
+    let html = `<div class="nt"></div><div class="nmeta"></div>`;
+    if (hasKids) {
+      const label = n.collapsed ? `+${countDesc(n.id)}` : '−';
+      const title = n.collapsed ? `展开（含 ${countDesc(n.id)} 个后代）` : '折叠子树';
+      html += `<button class="collapse" title="${title}">${label}</button>`;
+    }
+    d.innerHTML = html;
+    d.querySelector('.nt').textContent = n.title || '未命名';
+    d.querySelector('.nmeta').textContent = meta;
+    d.addEventListener('click', e => {
+      if (e.target.classList.contains('collapse')) {
+        e.stopPropagation();
+        // 折叠前：若选中点在该子树内，把选中提升到本节点
+        if (!n.collapsed && (selectedId === n.id || isDescendant(n.id, selectedId))) selectedId = n.id;
+        n.collapsed = !n.collapsed; saveTree(); renderAll(); return;
+      }
+      selectNode(n.id);
+    });
+    els.canvas.appendChild(d);
+  });
+}
+function escapeXml(s) { return s.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])); }
+
+/* ===================== 选中 / 会话面板 ===================== */
+function selectNode(id) { selectedId = id; saveTree(); renderTree(); renderConvo(); }
+
+function renderConvo() {
+  const path = pathTo(selectedId);
+  const isRoot = selectedId === rootId;
+  els.regen.disabled = isRoot; els.del.disabled = isRoot;   // 根节点不可删/重答
+  disarmActionBtns();
+  els.pathLabel.textContent = path.map(n => n.title || '·').join(' › ');
+  const sel = nodes[selectedId];
+  els.branchLabel.innerHTML = `从 <b>${escapeHtml(sel.title || '节点')}</b> 继续提问（将创建新分支）`;
+  els.convo.innerHTML = '';
+  const root = path[0];
+  if (root.content) addMsg('system', root.content);
+  for (let i = 1; i < path.length; i++) {
+    addMsg('user', path[i].query);
+    addMsg('assistant', path[i].content || '', path[i].reasoning, path[i].searches);
+  }
+  els.convo.scrollTop = els.convo.scrollHeight;
+}
+// 返回整个气泡 div；调用方可取 .c（答案）、.rc（思考过程）、.snote（搜索提示）
+function addMsg(role, content, reasoning, searches) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + role;
+  const label = { user: '你', assistant: '模型', system: 'System' }[role];
+  let html = `<div class="role">${label}</div>`;
+  if (role === 'assistant') {
+    const hasS = searches && searches.length;
+    html += `<div class="snote"${hasS ? '' : ' hidden'}></div>`;
+    html += `<details class="reason"${reasoning ? '' : ' hidden'}><summary>💭 思考过程</summary><div class="rc"></div></details>`;
+  }
+  html += `<div class="c"></div>`;
+  d.innerHTML = html;
+  if (role === 'assistant') {
+    if (reasoning) d.querySelector('.rc').textContent = reasoning;
+    if (searches && searches.length) d.querySelector('.snote').textContent = '🔎 已联网搜索：' + searches.join(' · ');
+  }
+  const cEl = d.querySelector('.c');
+  if (role === 'assistant') cEl.innerHTML = renderMd(content);  // 回答按 Markdown 渲染
+  else cEl.textContent = content;                                // 提问/system 保持纯文本
+  els.convo.appendChild(d);
+  return d;
+}
+// Markdown → HTML；无 marked（离线）时回退为纯文本
+function renderMd(text) {
+  if (window.marked) { try { return marked.parse(text || ''); } catch (_) {} }
+  return escapeHtml(text || '').replace(/\n/g, '<br>');
+}
+function escapeHtml(s) { return s.replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])); }
+
+function renderAll() { renderTree(); renderConvo(); }
+
+/* ===================== 模型调用 ===================== */
+function apiReady() {
+  if (!els.apiKey.value || !els.baseUrl.value) { alert('请先在"设置"里填写 Base URL 和 API Key'); return false; }
+  return true;
+}
+function chatUrl() { return els.baseUrl.value.replace(/\/$/, '') + '/chat/completions'; }
+
+let controller = null;
+
+// 从当前选中节点创建子节点并作答
+async function sendBranch() {
+  const text = els.input.value.trim();
+  if (!text || !apiReady()) return;
+  if (streamingId) { alert('已有生成任务在进行，请等待或点击"停止"'); return; }
+  els.input.value = '';
+  const parent = nodes[selectedId];
+  const child = { id: uid(), parentId: parent.id, query: text, content: '', reasoning: '',
+    title: '生成中…', children: [], createdAt: Date.now() };
+  nodes[child.id] = child; parent.children.push(child.id);
+  if (parent.collapsed) parent.collapsed = false;   // 在折叠的一级节点下追问 → 自动展开
+  selectedId = child.id; saveTree();
+  await runAnswer(child);
+}
+
+// 联网搜索工具定义（function calling）
+const WEB_TOOL = {
+  type: 'function',
+  function: {
+    name: 'web_search',
+    description: '当需要实时、最新或你不确定的事实信息时，搜索互联网。返回若干网页摘要。',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: '搜索关键词（中文或英文）' } },
+      required: ['query'],
+    },
+  },
+};
+// 调用 Tavily 搜索，返回精简的 JSON 字符串喂回模型
+async function webSearch(query) {
+  const key = els.tavilyKey.value.trim();
+  if (!key) return JSON.stringify({ error: '未配置 Tavily API Key' });
+  try {
+    const r = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+      body: JSON.stringify({ query, max_results: 5, search_depth: 'basic', include_answer: true }),
+    });
+    if (!r.ok) return JSON.stringify({ error: 'Tavily HTTP ' + r.status + ': ' + (await r.text()).slice(0, 200) });
+    const j = await r.json();
+    return JSON.stringify({
+      answer: j.answer || '',
+      results: (j.results || []).map(x => ({ title: x.title, url: x.url, content: x.content })),
+    });
+  } catch (e) { return JSON.stringify({ error: '搜索失败：' + e.message + '（可能是 CORS 或网络问题）' }); }
+}
+
+// 对某节点（已含 query/parentId）执行/重做流式作答，含工具调用循环
+// 设计：所有增量只写 node.* 状态，DOM 引用每帧现查；
+//   仅当用户当前正看着这个节点时才同步 DOM；自动滚动只在"原本贴底"时触发。
+async function runAnswer(node) {
+  if (!apiReady()) return;
+  if (streamingId) { alert('已有生成任务在进行，请等待或点击"停止"'); return; }
+  node.content = ''; node.reasoning = ''; node.searches = []; node.title = '生成中…';
+  streamingId = node.id;
+  selectedId = node.id; saveTree();
+  renderTree(); renderConvo();
+
+  // —— DOM 同步辅助：每次都现查当前 convo 里这条 assistant 气泡 ——
+  function liveBubble() {
+    if (selectedId !== node.id) return null;
+    const list = els.convo.querySelectorAll('.msg.assistant');
+    return list.length ? list[list.length - 1] : null;
+  }
+  function syncContent() {
+    const b = liveBubble(); if (!b) return;
+    const stick = els.convo.scrollHeight - els.convo.clientHeight - els.convo.scrollTop < 60;
+    const el = b.querySelector('.c'); if (el) el.innerHTML = renderMd(node.content || '');
+    if (stick) els.convo.scrollTop = els.convo.scrollHeight;
+  }
+  function syncReason(forceOpen) {
+    const b = liveBubble(); if (!b) return;
+    const rc = b.querySelector('.rc'), rb = b.querySelector('.reason');
+    if (rc) rc.textContent = node.reasoning || '';
+    if (rb && node.reasoning) { rb.hidden = false; if (forceOpen) rb.open = true; }
+  }
+  function syncSnote(text) {                  // text 为空则按已搜索列表回显
+    const b = liveBubble(); if (!b) return;
+    const sn = b.querySelector('.snote'); if (!sn) return;
+    const fallback = node.searches && node.searches.length ? '🔎 已联网搜索：' + node.searches.join(' · ') : '';
+    const s = text != null ? text : fallback;
+    sn.hidden = !s; sn.textContent = s;
+  }
+
+  setBusy(true);
+  controller = new AbortController();
+  const msgs = buildMessages(node.parentId, node.query);
+  const useTools = els.webOn.checked && els.tavilyKey.value.trim();
+  let acc = '', accR = '', searches = [];
+  try {
+    for (let round = 0; round < 6; round++) {
+      let cContent = '', cReason = '', toolMap = {};
+      let contentStarted = acc.length > 0;
+      const body = { model: els.model.value, messages: msgs, stream: true };
+      if (els.thinkOn.checked) { body.thinking = { type: 'enabled' }; body.reasoning_effort = els.thinkEffort.value; }
+      if (useTools) body.tools = [WEB_TOOL];
+      const resp = await fetch(chatUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + els.apiKey.value },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+
+      const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      while (true) {
+        const { done, value } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          const t = line.trim(); if (!t.startsWith('data:')) continue;
+          const data = t.slice(5).trim(); if (data === '[DONE]') continue;
+          try {
+            const delta = JSON.parse(data).choices?.[0]?.delta || {};
+            if (delta.reasoning_content) {
+              cReason += delta.reasoning_content; accR += delta.reasoning_content;
+              node.reasoning = accR;
+              syncReason(!contentStarted);
+            }
+            if (delta.content) {
+              if (!contentStarted) {           // 答案首字：折叠思考过程（仅当用户在看）
+                contentStarted = true;
+                const b = liveBubble();
+                const rb = b && b.querySelector('.reason'); if (rb) rb.open = false;
+              }
+              cContent += delta.content; acc += delta.content; node.content = acc;
+              syncContent();
+            }
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const i = tc.index || 0;
+                toolMap[i] = toolMap[i] || { id: '', type: 'function', function: { name: '', arguments: '' } };
+                if (tc.id) toolMap[i].id = tc.id;
+                if (tc.function?.name) toolMap[i].function.name = tc.function.name;
+                if (tc.function?.arguments) toolMap[i].function.arguments += tc.function.arguments;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      const toolCalls = Object.keys(toolMap).sort((a, b) => a - b).map(k => toolMap[k]);
+      if (toolCalls.length) {
+        const am = { role: 'assistant', content: cContent || null, tool_calls: toolCalls };
+        if (cReason) am.reasoning_content = cReason;
+        msgs.push(am);
+        for (const tc of toolCalls) {
+          let q = ''; try { q = JSON.parse(tc.function.arguments || '{}').query || ''; } catch (_) {}
+          searches.push(q); node.searches = searches.slice();
+          syncSnote('🔎 正在搜索：' + q);
+          const result = await webSearch(q);
+          msgs.push({ role: 'tool', tool_call_id: tc.id, content: result });
+        }
+        syncSnote();      // 回显"已联网搜索"
+        continue;
+      }
+      break;
+    }
+    node.content = acc; node.reasoning = accR; node.searches = searches; saveTree();
+    genTitle(node);
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      node.content = acc + '\n\n[已停止]'; node.reasoning = accR; node.searches = searches;
+      saveTree(); syncContent(); genTitle(node);
+    } else {
+      node.title = '出错'; saveTree();
+      const b = liveBubble();
+      const el = b && b.querySelector('.c');
+      if (el) el.innerHTML = `<span class="err">出错：${escapeHtml(e.message)}</span>`;
+    }
+  } finally {
+    streamingId = null;
+    setBusy(false); controller = null;
+    renderTree();                                    // 去掉 spinner / streaming 样式
+    if (selectedId === node.id) renderConvo();       // 拿到稳定的最终 Markdown 渲染
+  }
+}
+function setBusy(b) { els.send.disabled = b; els.stop.disabled = !b; }
+
+/* ===================== 删除 / 重答 ===================== */
+function collectDesc(id, arr) { arr.push(id); nodes[id].children.forEach(c => collectDesc(c, arr)); return arr; }
+
+function deleteNode(id) {                 // 删除节点及其整棵子树
+  if (id === rootId) return;
+  if (streamingId && (streamingId === id || isDescendant(id, streamingId))) {
+    alert('该子树中有正在生成的回答，请先停止或等待生成结束'); return;
+  }
+  const parentId = nodes[id].parentId;
+  collectDesc(id, []).forEach(x => delete nodes[x]);
+  nodes[parentId].children = nodes[parentId].children.filter(c => c !== id);
+  selectedId = parentId; saveTree(); renderAll();
+}
+
+async function regenerate(id) {           // 放弃所有子树，对该节点的 query 重新作答
+  if (id === rootId) return;
+  if (streamingId) { alert('已有生成任务在进行，请等待或点击"停止"'); return; }
+  const node = nodes[id];
+  node.children.forEach(c => collectDesc(c, []).forEach(x => delete nodes[x]));
+  node.children = [];
+  saveTree();
+  await runAnswer(node);
+}
+
+/* 为节点生成简短标题（独立的非流式小请求） */
+async function genTitle(node) {
+  if (!els.apiKey.value || !els.baseUrl.value) return;
+  const fallback = (node.query || node.content || '对话').slice(0, 12);
+  let prompt;
+  if (node.id === rootId) {
+    if (!node.content) { node.title = '开始'; saveTree(); renderTree(); return; }
+    prompt = `下面是一段 system 设定，请用4-12个字概括它的角色/主题：\n${node.content.slice(0, 400)}`;
+  } else {
+    prompt = `用户问：${node.query}\n模型答：${(node.content || '').slice(0, 400)}\n\n请用4-12个字概括这轮对话的主题。`;
+  }
+  try {
+    const resp = await fetch(chatUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + els.apiKey.value },
+      body: JSON.stringify({
+        model: els.model.value, stream: false, temperature: 0.3, max_tokens: 30,
+        messages: [
+          { role: 'system', content: '你只输出标题本身，不要引号、标点、解释，控制在4-12个汉字以内。' },
+          { role: 'user', content: prompt },
+        ],
+      }),
+    });
+    if (!resp.ok) throw new Error('title http ' + resp.status);
+    const j = await resp.json();
+    let title = (j.choices?.[0]?.message?.content || '').trim().replace(/^["「『]|["」』]$/g, '').replace(/[\n。.]+$/, '');
+    node.title = title || fallback;
+  } catch (_) {
+    node.title = fallback;
+  }
+  saveTree(); renderTree(); renderConvo();
+}
+
+/* ===================== 导出 / 导入 ===================== */
+function download(name, content, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+const ts = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+function exportJson() {
+  download(`infertree-tree-${ts()}.json`,
+    JSON.stringify({ exportedAt: new Date().toISOString(), model: els.model.value, rootId, nodes }, null, 2),
+    'application/json');
+}
+function exportMd() {
+  const path = pathTo(selectedId);
+  let md = `# InferTree 对话路径\n\n- 导出：${new Date().toLocaleString()}\n- 模型：${els.model.value}\n- 路径：${path.map(n => n.title).join(' › ')}\n`;
+  if (path[0].content) md += `\n> **System**：${path[0].content}\n`;
+  md += '\n---\n\n';
+  for (let i = 1; i < path.length; i++) {
+    md += `### 🧑 ${path[i].query}\n\n${path[i].content}\n\n`;
+  }
+  download(`infertree-path-${ts()}.md`, md, 'text/markdown');
+}
+function importJson(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const o = JSON.parse(r.result);
+      if (!o.rootId || !o.nodes) throw new Error('格式不符');
+      nodes = o.nodes; rootId = o.rootId; selectedId = rootId; saveTree(); renderAll(); fitView();
+    } catch (e) { alert('导入失败：' + e.message); }
+  };
+  r.readAsText(file);
+}
+
+/* ===================== 平移 / 缩放 ===================== */
+let tx = 0, ty = 0, scale = 1;
+function applyView() { els.canvas.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`; }
+function fitView() {
+  const { w, h } = layout();
+  const rect = els.wrap.getBoundingClientRect();
+  scale = Math.min(1, (rect.width - 40) / w, (rect.height - 40) / h) || 1;
+  tx = 20; ty = Math.max(20, (rect.height - h * scale) / 2);
+  applyView();
+}
+els.wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = els.wrap.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const f = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  const ns = Math.min(2.5, Math.max(0.2, scale * f));
+  tx = mx - (mx - tx) * (ns / scale); ty = my - (my - ty) * (ns / scale); scale = ns;
+  applyView();
+}, { passive: false });
+let panning = false, sx, sy;
+els.wrap.addEventListener('mousedown', e => {
+  if (e.target.closest('.node') || e.target.closest('#viewControls')) return;
+  panning = true; sx = e.clientX - tx; sy = e.clientY - ty; els.wrap.classList.add('panning');
+});
+window.addEventListener('mousemove', e => { if (panning) { tx = e.clientX - sx; ty = e.clientY - sy; applyView(); } });
+window.addEventListener('mouseup', () => { panning = false; els.wrap.classList.remove('panning'); });
+
+/* ===================== 拖拽分隔条调节大小 ===================== */
+const sideEl = $('side'), resizer = $('resizer');
+const savedW = parseInt(localStorage.getItem('sideW') || '', 10);
+if (savedW) sideEl.style.width = savedW + 'px';
+let rsz = false;
+resizer.addEventListener('mousedown', e => {
+  rsz = true; resizer.classList.add('active'); document.body.style.userSelect = 'none'; e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!rsz) return;
+  const w = Math.max(280, Math.min(window.innerWidth - 320, window.innerWidth - e.clientX));
+  sideEl.style.width = w + 'px';
+});
+window.addEventListener('mouseup', () => {
+  if (!rsz) return;
+  rsz = false; resizer.classList.remove('active'); document.body.style.userSelect = '';
+  localStorage.setItem('sideW', parseInt(sideEl.style.width, 10));
+});
+
+/* ===================== 点两下确认的按钮 ===================== */
+function disarm(btn) { clearTimeout(btn._t); btn.classList.remove('warn'); btn.textContent = btn._normal; }
+function disarmActionBtns() { [els.regen, els.del].forEach(disarm); }
+function makeArmable(btn, warnFn, action) {
+  btn._normal = btn.textContent;
+  btn.addEventListener('click', () => {
+    if (btn.disabled) return;
+    if (btn.classList.contains('warn')) {        // 第二次点击：执行
+      disarm(btn); action();
+    } else {                                     // 第一次点击：进入警告态
+      disarmActionBtns();
+      btn.classList.add('warn'); btn.textContent = warnFn();
+      btn._t = setTimeout(() => disarm(btn), 3000);  // 3 秒未确认则复位
+    }
+  });
+}
+const hasKids = () => nodes[selectedId].children.length > 0;
+makeArmable(els.del, () => hasKids() ? '⚠ 删整棵子树？再点确认' : '⚠ 确认删除？',
+  () => deleteNode(selectedId));
+makeArmable(els.regen, () => hasKids() ? '⚠ 将弃所有子树！再点确认' : '⚠ 确认重新回答？',
+  () => regenerate(selectedId));
+
+/* ===================== 事件绑定 ===================== */
+els.send.addEventListener('click', sendBranch);
+els.stop.addEventListener('click', () => controller?.abort());
+els.input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBranch(); } });
+$('toggleSettings').addEventListener('click', () => els.settings.classList.toggle('open'));
+$('exportJson').addEventListener('click', exportJson);
+$('exportMd').addEventListener('click', exportMd);
+$('importBtn').addEventListener('click', () => $('importFile').click());
+$('importFile').addEventListener('change', e => { if (e.target.files[0]) importJson(e.target.files[0]); });
+$('newTreeBtn').addEventListener('click', () => { if (confirm('新建会清空当前树，确定？')) { newTree(); renderAll(); fitView(); } });
+$('zoomIn').addEventListener('click', () => { scale = Math.min(2.5, scale * 1.15); applyView(); });
+$('zoomOut').addEventListener('click', () => { scale = Math.max(0.2, scale / 1.15); applyView(); });
+$('fitView').addEventListener('click', fitView);
+
+/* ===================== 启动 ===================== */
+if (window.marked) marked.use({ breaks: true, gfm: true });  // 单换行也换行、支持表格等
+loadCfg();
+loadTree();
+renderAll();
+fitView();
+if (!els.apiKey.value) els.settings.classList.add('open');
+</script>
+</body>
+</html>
