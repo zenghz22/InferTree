@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "id": "grader-smoke",
+  "name": "Grader 本地验证",
+  "description": "不调用模型，验证评测运行、持久化、工具轨迹与确定性 grader。",
+  "mode": "fixture",
+  "timeout_seconds": 10,
+  "cases": [
+    {
+      "id": "text-contract",
+      "name": "文本契约",
+      "fixture_output": "[BACKEND-AGENT] 结果是 42。",
+      "fixture_latency_ms": 12,
+      "graders": [
+        {"type": "no_error", "weight": 2},
+        {"type": "output_nonempty", "weight": 1},
+        {"type": "starts_with", "value": "[BACKEND-AGENT]", "weight": 2},
+        {"type": "contains", "value": "42", "weight": 1},
+        {"type": "not_contains", "value": "API key", "weight": 1},
+        {"type": "latency_ms", "max": 1000, "weight": 1}
+      ]
+    },
+    {
+      "id": "tool-trace",
+      "name": "工具轨迹",
+      "fixture_output": "已完成联网核查。",
+      "fixture_activities": [
+        {
+          "schema": "infertree.activity.v1",
+          "id": "fixture-tool",
+          "kind": "tool",
+          "action": "web.search",
+          "state": "completed",
+          "title": "联网搜索",
+          "message": "已完成搜索",
+          "detail": {"result_count": 3}
+        }
+      ],
+      "graders": [
+        {"type": "no_error", "weight": 1},
+        {"type": "tool_called", "value": "web.search", "weight": 2},
+        {"type": "regex", "value": "完成.*核查", "weight": 1}
+      ]
+    },
+    {
+      "id": "artifact-trace",
+      "name": "图表产物",
+      "fixture_output": "已提取主机制图。",
+      "fixture_artifacts": [
+        {"id": "p3-figure-2", "type": "figure", "page": 3, "url": "/fixture.png"}
+      ],
+      "graders": [
+        {"type": "artifact_count", "min": 1, "weight": 2},
+        {"type": "contains", "value": "主机制图", "weight": 1}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+.env
+config.local.toml
+.venv/
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+data/papers/*
+!data/papers/.gitkeep
+data/uploads/
+data/visuals/
+data/workspaces/
+data/evals/
+data/launcher.log
+data/server.pid
+/InferTree.exe

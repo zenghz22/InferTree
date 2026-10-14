@@ -1,0 +1,52 @@
+# Copy this file to config.local.toml. Never commit the local file.
+[agent]
+name = "InferTree Agent"
+instructions = "You are a careful, helpful assistant. Answer directly, use Markdown when it improves clarity, and state uncertainty instead of inventing facts."
+
+[model]
+# Shared OpenAI-compatible gateway. Model selection happens in the web GUI.
+base_url = "https://your-multi-model-gateway.example/v1"
+api_key = ""
+# Optional startup default. The GUI remembers the user's latest choice.
+default = "deepseek-v4-pro-0813"
+connect_timeout_seconds = 10
+read_timeout_seconds = 45
+# Set true only when this API must use HTTP_PROXY/HTTPS_PROXY from the environment.
+use_system_proxy = false
+
+# InferTree has built-in profiles for the six models shown in the GUI. If your
+# gateway uses a different model ID, override only its upstream `name` here.
+# Official direct APIs commonly use lowercase IDs; multi-model gateways may use
+# display-style aliases such as the defaults below.
+# [models.qwen3-8-max]
+# name = "qwen3.8-max"
+# base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# api_key = "optional-separate-key"
+#
+# [models.kimi-k3]
+# name = "kimi-k3"
+#
+# [models.deepseek-v4-pro-0813]
+# name = "deepseek-v4-pro"
+
+[ui.theme]
+# Six-digit hexadecimal colors. Refresh the browser after editing.
+background = "#FAF2E0"
+panel = "#FFFCF5"
+text = "#17324A"
+border = "#D8CDB8"
+accent = "#0E61AC"
+
+[context]
+# Only the root-to-current-node path is eligible for model context. Older turns
+# are removed when this character budget is reached, while a short question
+# index preserves the branch's topic history.
+max_chars = 60000
+recent_turns = 4
+max_message_chars = 12000
+outline_chars = 4000
+
+[tools.tavily]
+enabled = false
+api_key = ""
+max_results = 5
