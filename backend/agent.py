@@ -124,21 +124,22 @@ ACTIVATE_SKILL_TOOL = {
         },
     },
 }
-PRESENT_OPTIONS_TOOL = {
+UI_ACTION_TOOL = {
     "type": "function",
     "function": {
-        "name": "present_options",
+        "name": "ui_action",
         "description": (
-            "Present up to five clickable choices to the user, for example candidate "
-            "papers after a search or follow-up review modes after a download. Each option "
-            "carries a short label and the exact prompt that will be sent when clicked. "
-            "The UI already appends an \"Other: please input\" option, so do not add your "
-            "own generic other/fallback option. A prompt may contain the {input} placeholder "
-            "to merge whatever the user typed in the composer."
+            "Emit one structured UI element for the user to interact with. type=options "
+            "presents up to five clickable choices; type=confirm asks the user to confirm or "
+            "cancel an action; type=input asks the user to type a short answer. Return exactly "
+            "one action per call. For options, the UI already appends an \"Other: please input\" "
+            "option, so do not add your own generic other option. prompt / prompt_template / "
+            "prompt_on_confirm may use the {input} placeholder to merge the user's composer text."
         ),
         "parameters": {
             "type": "object",
             "properties": {
+                "type": {"type": "string", "enum": ["options", "confirm", "input"]},
                 "options": {
                     "type": "array",
                     "maxItems": 5,
@@ -148,24 +149,27 @@ PRESENT_OPTIONS_TOOL = {
                             "label": {"type": "string", "description": "Short visible label."},
                             "prompt": {
                                 "type": "string",
-                                "description": "Exact instruction sent when the user clicks this option.",
+                                "description": "Exact instruction sent when clicked.",
                             },
-                            "skill": {
-                                "type": "string",
-                                "enum": sorted(ALLOWED_SKILLS),
-                                "description": "Optional skill to apply for the click.",
-                            },
-                            "skill_mode": {
-                                "type": "string",
-                                "enum": sorted(ALLOWED_SKILL_MODES),
-                                "description": "Optional reviewer mode for the click.",
-                            },
+                            "skill": {"type": "string", "enum": sorted(ALLOWED_SKILLS)},
+                            "skill_mode": {"type": "string", "enum": sorted(ALLOWED_SKILL_MODES)},
                         },
                         "required": ["label", "prompt"],
                     },
-                }
+                },
+                "title": {"type": "string", "description": "confirm: optional heading."},
+                "message": {"type": "string", "description": "confirm: the question shown to the user."},
+                "confirm_label": {"type": "string", "description": "confirm: confirm button label."},
+                "cancel_label": {"type": "string", "description": "confirm: cancel button label."},
+                "prompt_on_confirm": {"type": "string", "description": "confirm: prompt sent when confirmed."},
+                "label": {"type": "string", "description": "input: the question shown above the field."},
+                "placeholder": {"type": "string", "description": "input: placeholder text in the field."},
+                "submit_label": {"type": "string", "description": "input: submit button label."},
+                "prompt_template": {"type": "string", "description": "input: template for the sent prompt; use {input} for the typed text."},
+                "skill": {"type": "string", "enum": sorted(ALLOWED_SKILLS)},
+                "skill_mode": {"type": "string", "enum": sorted(ALLOWED_SKILL_MODES)},
             },
-            "required": ["options"],
+            "required": ["type"],
         },
     },
 }
@@ -647,7 +651,7 @@ def _upstream_request(
     } and payload.get("paper_id"):
         tools.extend([LIST_PAPER_VISUALS_TOOL, RENDER_PAPER_VISUALS_TOOL])
     if include_tools and payload.get("skill"):
-        tools.append(PRESENT_OPTIONS_TOOL)
+        tools.append(UI_ACTION_TOOL)
     if tools:
         request["tools"] = tools
         request["tool_choice"] = "auto"
@@ -716,10 +720,10 @@ def _tool_activity(
             "截取论文图表",
             {"visual_ids": visual_ids},
         ),
-        "present_options": (
-            "ui.options",
-            "呈现选项",
-            {"option_count": len(arguments.get("options") or [])},
+        "ui_action": (
+            "ui.action",
+            "呈现交互",
+            {"ui_type": str(arguments.get("type", ""))[:40]},
         ),
     }
     action, title, detail = definitions.get(
@@ -732,6 +736,109 @@ def _tool_activity(
         parent_id=parent_id,
         detail={"round": round_number, **detail},
     )
+
+
+def _normalize_ui_options(raw: Any) -> List[Dict[str, str]]:
+    if not isinstance(raw, list):
+        return []
+    options: List[Dict[str, str]] = []
+    for item in raw[:5]:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label", "")).strip()
+        prompt = str(item.get("prompt", "")).strip()
+        if not label or not prompt:
+            continue
+        option: Dict[str, str] = {"label": label[:80], "prompt": prompt[:4000]}
+        skill = item.get("skill")
+        if isinstance(skill, str) and skill in ALLOWED_SKILLS:
+            option["skill"] = skill
+        skill_mode = item.get("skill_mode")
+        if isinstance(skill_mode, str) and skill_mode in ALLOWED_SKILL_MODES:
+            option["skill_mode"] = skill_mode
+        options.append(option)
+    return options
+
+
+def _build_ui_action(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and normalize a ui_action call into a UI intent payload."""
+
+    def _skill_fields(src: Dict[str, Any]) -> Dict[str, str]:
+        fields: Dict[str, str] = {}
+        skill = src.get("skill")
+        if isinstance(skill, str) and skill in ALLOWED_SKILLS:
+            fields["skill"] = skill
+        skill_mode = src.get("skill_mode")
+        if isinstance(skill_mode, str) and skill_mode in ALLOWED_SKILL_MODES:
+            fields["skill_mode"] = skill_mode
+        return fields
+
+    def _fail(message: str) -> Dict[str, Any]:
+        return {
+            "content": json.dumps({"error": message}, ensure_ascii=False),
+            "state": "failed",
+            "message": message,
+            "detail": {},
+            "artifacts": [],
+        }
+
+    ui_type = str(arguments.get("type", "")).strip()
+    if ui_type == "options":
+        options = _normalize_ui_options(arguments.get("options"))
+        if not options:
+            return _fail("没有可呈现的选项")
+        return {
+            "content": json.dumps({"emitted": "options"}, ensure_ascii=False),
+            "state": "completed",
+            "message": f"已呈现 {len(options)} 个选项",
+            "detail": {"option_count": len(options)},
+            "artifacts": [],
+            "ui": {"type": "options", "options": options},
+        }
+    if ui_type == "confirm":
+        message_text = str(arguments.get("message", "")).strip()
+        if not message_text:
+            return _fail("确认内容不能为空")
+        ui = {
+            "type": "confirm",
+            "title": str(arguments.get("title", "")).strip()[:200],
+            "message": message_text[:1000],
+            "confirm_label": str(arguments.get("confirm_label", "")).strip()[:40] or "确认",
+            "cancel_label": str(arguments.get("cancel_label", "")).strip()[:40] or "取消",
+            "prompt_on_confirm": str(arguments.get("prompt_on_confirm", "")).strip()[:4000] or "确认",
+        }
+        ui.update(_skill_fields(arguments))
+        return {
+            "content": json.dumps({"emitted": "confirm"}, ensure_ascii=False),
+            "state": "completed",
+            "message": "已请求用户确认",
+            "detail": {},
+            "artifacts": [],
+            "ui": ui,
+        }
+    if ui_type == "input":
+        label = str(arguments.get("label", "")).strip()
+        if not label:
+            return _fail("输入提示不能为空")
+        ui = {
+            "type": "input",
+            "label": label[:200],
+            "placeholder": str(arguments.get("placeholder", "")).strip()[:200],
+            "submit_label": str(arguments.get("submit_label", "")).strip()[:40] or "发送",
+        }
+        template = arguments.get("prompt_template")
+        if isinstance(template, str) and template.strip():
+            ui["prompt_template"] = template.strip()[:4000]
+        ui.update(_skill_fields(arguments))
+        return {
+            "content": json.dumps({"emitted": "input"}, ensure_ascii=False),
+            "state": "completed",
+            "message": "已请求用户输入",
+            "detail": {},
+            "artifacts": [],
+            "ui": ui,
+        }
+    return _fail(f"未知交互类型：{ui_type or '?'}")
 
 
 async def _execute_agent_tool(
@@ -867,48 +974,8 @@ async def _execute_agent_tool(
             "detail": {"rendered_count": len(visuals)},
             "artifacts": visuals,
         }
-    if tool_name == "present_options":
-        raw = arguments.get("options")
-        if not isinstance(raw, list):
-            return {
-                "content": json.dumps({"error": "options must be a list"}, ensure_ascii=False),
-                "state": "failed",
-                "message": "选项格式无效",
-                "detail": {},
-                "artifacts": [],
-            }
-        options: List[Dict[str, str]] = []
-        for item in raw[:5]:
-            if not isinstance(item, dict):
-                continue
-            label = str(item.get("label", "")).strip()
-            prompt = str(item.get("prompt", "")).strip()
-            if not label or not prompt:
-                continue
-            option: Dict[str, str] = {"label": label[:80], "prompt": prompt[:4000]}
-            skill = item.get("skill")
-            if isinstance(skill, str) and skill in ALLOWED_SKILLS:
-                option["skill"] = skill
-            skill_mode = item.get("skill_mode")
-            if isinstance(skill_mode, str) and skill_mode in ALLOWED_SKILL_MODES:
-                option["skill_mode"] = skill_mode
-            options.append(option)
-        if not options:
-            return {
-                "content": json.dumps({"error": "no valid options"}, ensure_ascii=False),
-                "state": "failed",
-                "message": "没有可呈现的选项",
-                "detail": {},
-                "artifacts": [],
-            }
-        return {
-            "content": json.dumps({"presented": len(options)}, ensure_ascii=False),
-            "state": "completed",
-            "message": f"已呈现 {len(options)} 个选项",
-            "detail": {"option_count": len(options)},
-            "artifacts": [],
-            "options": options,
-        }
+    if tool_name == "ui_action":
+        return _build_ui_action(arguments)
     return {
         "content": json.dumps({"error": f"Unknown tool: {tool_name}"}),
         "state": "failed",
@@ -1149,9 +1216,9 @@ async def run_agent(payload: Dict[str, Any], config: AgentConfig) -> Response:
                                 tool_name, arguments, payload, config
                             )
                             result = str(outcome["content"])
-                            presented_options = outcome.get("options")
-                            if presented_options:
-                                yield _sse_packet({"agent_options": presented_options})
+                            ui_payload = outcome.get("ui")
+                            if ui_payload:
+                                yield _sse_packet({"agent_ui": ui_payload})
                             activated_skill = outcome.get("activated_skill")
                             if activated_skill:
                                 payload["skill"] = activated_skill
@@ -1178,7 +1245,7 @@ async def run_agent(payload: Dict[str, Any], config: AgentConfig) -> Response:
                                 if activated_skill == "paper-downloader":
                                     current_tools.append(DOWNLOAD_PAPER_TOOL)
                                 elif activated_skill == "paper-search":
-                                    pass  # web_search 与 present_options 已在 current_tools 中
+                                    pass  # web_search 与 ui_action 已在 current_tools 中
                                 elif payload.get("paper_id"):
                                     current_tools.extend(
                                         [LIST_PAPER_VISUALS_TOOL, RENDER_PAPER_VISUALS_TOOL]

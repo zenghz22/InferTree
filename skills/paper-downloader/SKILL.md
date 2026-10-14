@@ -16,7 +16,7 @@ Obtain and verify the correct public manuscript as a local PDF.
 ## Output
 
 - After a successful download, reply briefly: state that the paper is downloaded and verified, and give the verified title, authors, source, and page count. Do NOT write a review, summary, or analysis in the reply.
-- Then call `present_options` to offer next steps, one option per mode:
+- Then call `ui_action` with `type: "options"` to offer next steps, one option per mode:
   - full review → skill "paper-reviewer", skill_mode "full-review";
   - story lecture → skill "paper-reviewer", skill_mode "story-lecture";
   - summary → skill "paper-reviewer", skill_mode "summary";

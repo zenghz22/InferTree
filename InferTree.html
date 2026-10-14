@@ -268,13 +268,22 @@ window.MathJax = {
   #skillModeSelect { max-width: 116px; }
   #quickActions { display: flex; gap: 5px; flex-wrap: wrap; padding: 2px 0; }
   #quickActions button { font-size: 11px; padding: 4px 8px; }
-  .node-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .node-options:empty { display: none; }
+  .node-ui { margin-top: 8px; }
+  .node-ui:empty { display: none; }
+  .ui-options { display: flex; flex-wrap: wrap; gap: 6px; }
   .option-btn { font-size: 16px; font-weight: 700; padding: 8px 14px;
     border: 2px solid #17324A; color: #000000; background: #FFFFFF;
     border-radius: 10px; cursor: pointer; box-shadow: 0 1px 2px rgba(0, 0, 0, .16); }
   .option-btn:hover { background: #F0E8D2; border-color: #000000; }
   .option-btn.other-option { border-style: dashed; }
+  .ui-confirm { border: 2px solid #17324A; background: #FFF7E0; border-radius: 10px; padding: 10px 12px; }
+  .ui-confirm-title { font-weight: 700; font-size: 14px; color: #17324A; margin-bottom: 4px; }
+  .ui-confirm-message { font-size: 13px; color: #1a1a1a; margin-bottom: 8px; white-space: pre-wrap; }
+  .ui-confirm-actions { display: flex; gap: 6px; }
+  .ui-input { border: 2px dashed #17324A; background: #FFFFFF; border-radius: 10px; padding: 8px 10px; }
+  .ui-input-label { font-weight: 700; font-size: 13px; color: #1a1a1a; margin-bottom: 6px; }
+  .ui-input-row { display: flex; gap: 6px; }
+  .ui-input-row input { flex: 1; font-size: 14px; padding: 6px 8px; border: 1px solid #17324A; border-radius: 6px; }
   #thinkEffort { max-width: 74px; }
   #paperStatus { display: inline-block; max-width: 104px; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; vertical-align: middle; }
@@ -1549,7 +1558,7 @@ function renderConvo() {
       path[i].agentStatus, path[i].activities, path[i].paperId,
     );
     assistantMessage.dataset.nodeId = path[i].id;
-    renderNodeOptions(assistantMessage, path[i].options, path[i].id);
+    renderUi(assistantMessage, path[i].ui, path[i].id);
   }
   renderTurnNav(path);
   els.convo.scrollTop = els.convo.scrollHeight;
@@ -1646,7 +1655,7 @@ function addMsg(role, content, reasoning, searches, agentStatus, activities, pap
     html += `<details class="reason"${reasoning ? '' : ' hidden'}><summary>💭 思考过程</summary><div class="rc"></div></details>`;
   }
   html += `<div class="c"></div>`;
-  if (role === 'assistant') html += `<div class="node-options"></div>`;
+  if (role === 'assistant') html += `<div class="node-ui"></div>`;
   d.innerHTML = html;
   if (role === 'assistant') {
     if (reasoning) d.querySelector('.rc').textContent = reasoning;
@@ -1677,11 +1686,21 @@ function composePrompt(template, typed) {
   return tmpl ? `${tmpl}\n\n${t}` : t;
 }
 
-function renderNodeOptions(messageEl, options, sourceNodeId) {
-  const wrap = messageEl && messageEl.querySelector('.node-options');
+function renderUi(messageEl, ui, sourceNodeId) {
+  const wrap = messageEl && messageEl.querySelector('.node-ui');
   if (!wrap) return;
   wrap.replaceChildren();
+  if (!ui || !ui.type) return;
+  if (ui.type === 'options') renderOptionsUi(wrap, ui.options, sourceNodeId);
+  else if (ui.type === 'confirm') renderConfirmUi(wrap, ui, sourceNodeId);
+  else if (ui.type === 'input') renderInputUi(wrap, ui, sourceNodeId);
+  // 未知类型忽略
+}
+
+function renderOptionsUi(wrap, options, sourceNodeId) {
   if (!Array.isArray(options) || !options.length) return;
+  const box = document.createElement('div');
+  box.className = 'ui-options';
   for (const option of options) {
     if (!option?.label || !option?.prompt) continue;
     const btn = document.createElement('button');
@@ -1689,7 +1708,7 @@ function renderNodeOptions(messageEl, options, sourceNodeId) {
     btn.className = 'option-btn';
     btn.textContent = option.label;
     btn.addEventListener('click', () => chooseOption(sourceNodeId, option));
-    wrap.appendChild(btn);
+    box.appendChild(btn);
   }
   // 自动追加「其他：请输入」——点击后发送输入框中的自定义内容
   const other = document.createElement('button');
@@ -1698,7 +1717,60 @@ function renderNodeOptions(messageEl, options, sourceNodeId) {
   other.textContent = '✎ 其他：请输入';
   other.title = '先在下方输入框填写你的自定义要求，再点击本选项';
   other.addEventListener('click', () => chooseOther(sourceNodeId));
-  wrap.appendChild(other);
+  box.appendChild(other);
+  wrap.appendChild(box);
+}
+
+function renderConfirmUi(wrap, ui, sourceNodeId) {
+  const card = document.createElement('div');
+  card.className = 'ui-confirm';
+  const title = document.createElement('div'); title.className = 'ui-confirm-title';
+  title.textContent = ui.title || '确认操作';
+  const msg = document.createElement('div'); msg.className = 'ui-confirm-message';
+  msg.textContent = ui.message || '';
+  const actions = document.createElement('div'); actions.className = 'ui-confirm-actions';
+  const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'option-btn';
+  ok.textContent = ui.confirm_label || '确认';
+  ok.addEventListener('click', () => {
+    if (streamingId) { alert('已有生成任务在进行，请等待或点击"停止"'); return; }
+    const parent = nodes[sourceNodeId]; if (!parent) return;
+    sendAsChild(parent, ui.prompt_on_confirm || '确认', { skill: ui.skill, skillMode: ui.skill_mode });
+  });
+  const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'option-btn other-option';
+  cancel.textContent = ui.cancel_label || '取消';
+  cancel.addEventListener('click', () => {
+    const node = nodes[sourceNodeId];
+    if (node) { node.ui = null; saveTree(); }
+    card.remove();
+  });
+  actions.append(ok, cancel);
+  card.append(title, msg, actions);
+  wrap.appendChild(card);
+}
+
+function renderInputUi(wrap, ui, sourceNodeId) {
+  const box = document.createElement('div');
+  box.className = 'ui-input';
+  const label = document.createElement('div'); label.className = 'ui-input-label';
+  label.textContent = ui.label || '请输入';
+  const row = document.createElement('div'); row.className = 'ui-input-row';
+  const input = document.createElement('input'); input.type = 'text';
+  input.placeholder = ui.placeholder || '';
+  const submit = document.createElement('button'); submit.type = 'button'; submit.className = 'option-btn';
+  submit.textContent = ui.submit_label || '发送';
+  const doSubmit = () => {
+    const value = input.value.trim();
+    if (!value) { input.focus(); return; }
+    if (streamingId) { alert('已有生成任务在进行，请等待或点击"停止"'); return; }
+    const parent = nodes[sourceNodeId]; if (!parent) return;
+    const prompt = composePrompt(ui.prompt_template || '{input}', value);
+    sendAsChild(parent, prompt, { skill: ui.skill, skillMode: ui.skill_mode });
+  };
+  submit.addEventListener('click', doSubmit);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') doSubmit(); });
+  row.append(input, submit);
+  box.append(label, row);
+  wrap.appendChild(box);
 }
 
 function chooseOption(sourceNodeId, option) {
@@ -2015,7 +2087,7 @@ async function startAnswerSafely(node) {
 async function runAnswer(node) {
   if (!apiReady()) throw new Error('后端或模型列表尚未就绪，请等待状态栏显示已连接后重试。');
   if (streamingId) throw new Error('已有生成任务在进行，请等待或点击“停止”。');
-  node.content = ''; node.reasoning = ''; node.searches = []; node.artifacts = []; node.activities = []; node.options = [];
+  node.content = ''; node.reasoning = ''; node.searches = []; node.artifacts = []; node.activities = []; node.ui = null;
   node.agentStatus = 'Agent 正在准备请求…'; node.title = '生成中…';
   streamingId = node.id;
   // 先进入可停止状态，再执行任何可能失败的持久化或 DOM 渲染。
@@ -2054,9 +2126,9 @@ async function runAnswer(node) {
     const s = text != null ? text : fallback;
     sn.hidden = !s; sn.textContent = s;
   }
-  function syncOptions() {
+  function syncUi() {
     const b = liveBubble(); if (!b) return;
-    renderNodeOptions(b, node.options, node.id);
+    renderUi(b, node.ui, node.id);
   }
   function syncActivities() {
     const b = liveBubble(); if (!b) return;
@@ -2189,9 +2261,9 @@ async function runAnswer(node) {
             }
             continue;
           }
-          if (packet.agent_options) {
-            node.options = (packet.agent_options || []).slice(0, 5);
-            syncOptions();
+          if (packet.agent_ui) {
+            node.ui = packet.agent_ui;
+            syncUi();
             saveTree();
             continue;
           }
