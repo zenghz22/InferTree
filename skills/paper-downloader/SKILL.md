@@ -10,8 +10,15 @@ Obtain and verify the correct public manuscript as a local PDF.
 ## Workflow
 
 1. If the user supplies an arXiv ID or a supported repository PDF URL, call `download_paper` directly.
-2. If only a DOI or a specific title is given, search narrowly to locate a stable open copy, then download it.
-3. Verify the downloaded title and authors against the requested paper.
+2. If only a DOI or a specific title is given, search narrowly to locate a stable open copy.
+3. If the located paper only partially matches the request (close-but-not-exact title, different year/venue/version, or ambiguity between several hits), do NOT download yet. Call `ui_action` with `type: "confirm"` and `skill: "paper-downloader"`:
+   - title: "确认下载";
+   - message: one line stating the located title/authors/venue and why it might not be the intended paper;
+   - confirm_label: "下载这篇";
+   - cancel_label: "取消";
+   - prompt_on_confirm: "下载论文「<located title>」（<id / url>）并验证其标题与作者是否一致".
+   Only call `download_paper` after the user confirms.
+4. Verify the downloaded title and authors against the requested paper.
 
 ## Output
 
