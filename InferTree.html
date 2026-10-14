@@ -1991,6 +1991,7 @@ async function sendAsChild(parent, text, opts = {}) {
   const child = buildChild(parent, text, excerpt, opts);
   nodes[child.id] = child; parent.children.push(child.id);
   if (parent.collapsed) parent.collapsed = false;   // 在折叠的一级节点下追问 → 自动展开
+  if (parent.ui) parent.ui = null;                  // 父节点不再是叶子：交互 UI 只停留在叶子节点
   localSelection = null;
   window.getSelection()?.removeAllRanges();
   selectedId = child.id; saveTree();
