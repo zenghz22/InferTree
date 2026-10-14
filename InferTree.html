@@ -1558,7 +1558,7 @@ function renderConvo() {
       path[i].agentStatus, path[i].activities, path[i].paperId,
     );
     assistantMessage.dataset.nodeId = path[i].id;
-    renderUi(assistantMessage, path[i].ui, path[i].id);
+    renderUi(assistantMessage, path[i], i === path.length - 1);
   }
   renderTurnNav(path);
   els.convo.scrollTop = els.convo.scrollHeight;
@@ -1686,14 +1686,63 @@ function composePrompt(template, typed) {
   return tmpl ? `${tmpl}\n\n${t}` : t;
 }
 
-function renderUi(messageEl, ui, sourceNodeId) {
+const WORKFLOW_MENU = [
+  { label: '📝 摘要', skill: 'paper-reviewer', skill_mode: 'summary',
+    prompt: '请对这篇论文做一段简洁摘要：讲清它的问题、方法、证据与结论。' },
+  { label: '🔬 完整审稿', skill: 'paper-reviewer', skill_mode: 'full-review',
+    prompt: '请对这篇论文做一次完整审稿：按审稿量表给出优缺点、质疑、可复现性与临时建议。' },
+  { label: '🎯 聚焦关键点', skill: 'paper-reviewer', skill_mode: 'focused-check',
+    prompt: '请聚焦核查这篇论文最关键的论断或维度（例如方法是否站得住、主结果是否可信），并逐条引用页码。' },
+  { label: '📖 故事讲授', skill: 'paper-reviewer', skill_mode: 'story-lecture',
+    prompt: '请用故事讲授的方式，循序渐进、用类比与精确术语讲懂这篇论文。' },
+  { label: '🖼️ 图表提取', skill: 'paper-visual-extractor', skill_mode: '',
+    prompt: '请提取并展示这篇论文最重要的机制图与关键结果图表，并说明各自作用。' },
+];
+
+function menuKey(skill, skillMode) {
+  return `${skill || ''}::${skillMode || ''}`;
+}
+function menuMatches(item, skill, skillMode) {
+  if ((item.skill_mode || '') === '') return item.skill === skill;   // 无模式：按技能匹配
+  return item.skill === skill && item.skill_mode === skillMode;
+}
+function menuForNode(node) {
+  if (!node) return [];
+  const used = [];
+  for (const n of pathTo(node.id)) {
+    if (n.skill) used.push({ skill: n.skill, skillMode: n.skillMode || '' });
+  }
+  return WORKFLOW_MENU.filter(item =>
+    !used.some(u => menuMatches(item, u.skill, u.skillMode)));
+}
+
+function renderUi(messageEl, node, isLeaf) {
   const wrap = messageEl && messageEl.querySelector('.node-ui');
   if (!wrap) return;
   wrap.replaceChildren();
-  if (!ui || !ui.type) return;
-  if (ui.type === 'options') renderOptionsUi(wrap, ui.options, sourceNodeId);
-  else if (ui.type === 'confirm') renderConfirmUi(wrap, ui, sourceNodeId);
-  else if (ui.type === 'input') renderInputUi(wrap, ui, sourceNodeId);
+  const ui = node && node.ui;
+
+  // 1) 确定性菜单：只在叶子、已绑定论文、非生成中时显示
+  let menu = [];
+  if (isLeaf && !streamingId && node && paperForNode(node.id)?.paperId) {
+    menu = menuForNode(node);
+  }
+  // 2) 合并模型临时选项（按 skill::skill_mode 去重）
+  const optionList = [...menu];
+  if (ui && ui.type === 'options' && Array.isArray(ui.options)) {
+    const seen = new Set(optionList.map(o => menuKey(o.skill, o.skill_mode)));
+    for (const o of ui.options) {
+      if (!o?.label || !o?.prompt) continue;
+      const key = menuKey(o.skill, o.skill_mode);
+      if (seen.has(key)) continue;
+      seen.add(key); optionList.push(o);
+    }
+  }
+  if (optionList.length) renderOptionsUi(wrap, optionList, node.id);
+
+  // 3) 模型确认 / 输入
+  if (ui && ui.type === 'confirm') renderConfirmUi(wrap, ui, node.id);
+  else if (ui && ui.type === 'input') renderInputUi(wrap, ui, node.id);
   // 未知类型忽略
 }
 
@@ -2129,7 +2178,7 @@ async function runAnswer(node) {
   }
   function syncUi() {
     const b = liveBubble(); if (!b) return;
-    renderUi(b, node.ui, node.id);
+    renderUi(b, node, true);
   }
   function syncActivities() {
     const b = liveBubble(); if (!b) return;

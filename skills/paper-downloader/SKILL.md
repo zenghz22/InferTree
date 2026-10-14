@@ -23,13 +23,7 @@ Obtain and verify the correct public manuscript as a local PDF.
 ## Output
 
 - After a successful download, reply briefly: state that the paper is downloaded and verified, and give the verified title, authors, source, and page count. Do NOT write a review, summary, or analysis in the reply.
-- Then call `ui_action` with `type: "options"` to offer next steps, one option per mode:
-  - full review → skill "paper-reviewer", skill_mode "full-review";
-  - story lecture → skill "paper-reviewer", skill_mode "story-lecture";
-  - summary → skill "paper-reviewer", skill_mode "summary";
-  - focused check → skill "paper-reviewer", skill_mode "focused-check";
-  - extract figures → skill "paper-visual-extractor".
-  - Do not add your own generic "other" option; the UI appends "其他：请输入" automatically.
+- Do NOT call `ui_action` to offer the standard next steps (summary / full review / focused check / story lecture / extract figures); the UI shows that menu automatically once a paper is bound. Only use `ui_action` for an ad-hoc interaction the standard menu does not cover (e.g. the confirm before an uncertain download above, or an input to disambiguate the title).
 - If the wrong paper was found or the title cannot be verified, say so and do not present it as confirmed.
 - If no supported open PDF is available, ask the user to upload the file.
 

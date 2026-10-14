@@ -37,5 +37,5 @@ Produce an evidence-grounded review that helps an author or program committee ma
 
 ## Continue the chain
 
-- After finishing your answer, call `ui_action` with `type: "options"` to offer 1–3 sensible next steps the user can chain downward without retyping context (a different review mode, visual extraction, or a targeted check). Do not offer the mode you just used.
-- Set each option's `skill` and `skill_mode` explicitly (e.g. skill "paper-reviewer" with skill_mode "focused-check", or skill "paper-visual-extractor"). Make each `prompt` self-contained so it works as a fresh child node.
+- The UI already shows the standard next-step menu (other review modes + figure extraction) on the current leaf once a paper is bound. Do NOT re-emit those standard options with `ui_action`.
+- Only call `ui_action` for an ad-hoc follow-up the standard menu does not cover (e.g. a confirm before an irreversible action, an input for a specific claim to check, or a context-specific option). Set each option's `skill`/`skill_mode` explicitly and make each `prompt` self-contained.
