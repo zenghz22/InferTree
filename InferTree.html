@@ -155,8 +155,9 @@ window.MathJax = {
   .page-citation:hover { background: color-mix(in srgb, var(--accent) 22%, var(--bg)); border: 0; }
 
   /* 会话侧栏 */
-  #side { width: 380px; flex-shrink: 0; background: var(--panel);
+  #side { flex: 1 1 auto; min-width: 0; background: var(--panel);
     display: flex; flex-direction: column; min-height: 0; position: relative; }
+  body.map-open #side { flex: 0 0 auto; }
   #convoHead { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
   #convoHead b { color: var(--accent); }
   #nodeActions { display: flex; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
@@ -164,7 +165,8 @@ window.MathJax = {
   #nodeActions button.warn { background: var(--danger); border-color: var(--danger); color: #fff; }
   #nodeActions button:disabled { opacity: .4; }
   #convoShell { flex: 1; min-height: 0; position: relative; }
-  #convo { height: 100%; overflow-y: auto; padding: 14px 38px 14px 14px;
+  #convo { height: 100%; overflow-y: auto; padding: 14px 24px;
+    max-width: 920px; margin: 0 auto; width: 100%; box-sizing: border-box;
     display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; }
   #convo::-webkit-scrollbar { width: 9px; }
   #convo::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 25%, var(--bg)); border: 3px solid var(--panel); border-radius: 8px; }
@@ -311,6 +313,7 @@ window.MathJax = {
   <button id="redoBtn" title="重做 (Ctrl+Y)">↪ 重做</button>
   <span class="spacer"></span>
   <button id="newTreeBtn" title="新建对话树">新建</button>
+  <button id="toggleMap" title="显示/隐藏结构地图">🗺 地图</button>
   <button id="exportMd" title="导出当前路径 Markdown">导出 MD</button>
   <button id="exportJson" title="导出完整对话树 JSON">导出 JSON</button>
   <button id="importBtn" title="导入对话树 JSON">导入</button>
@@ -2574,6 +2577,28 @@ window.addEventListener('mouseup', () => {
   rsz = false; resizer.classList.remove('active'); document.body.style.userSelect = '';
   safeLocalStorageSet('sideW', String(parseInt(sideEl.style.width, 10)));
 });
+
+/* ===================== 结构地图（大纲）显示/隐藏 ===================== */
+function applyMapLayout() {
+  const open = document.body.classList.contains('map-open');
+  els.wrap.hidden = !open;
+  resizer.hidden = !open;
+  if (open) {
+    const w = parseInt(safeLocalStorageGet('sideW', '') || '', 10) || 380;
+    sideEl.style.width = w + 'px';
+    requestAnimationFrame(fitView);
+  } else {
+    sideEl.style.width = '';
+  }
+}
+$('toggleMap').addEventListener('click', () => {
+  const open = !document.body.classList.contains('map-open');
+  document.body.classList.toggle('map-open', open);
+  safeLocalStorageSet('mapOpen', open ? '1' : '0');
+  applyMapLayout();
+});
+if (safeLocalStorageGet('mapOpen', '0') === '1') document.body.classList.add('map-open');
+applyMapLayout();
 
 /* ===================== 点两下确认的按钮 ===================== */
 function disarm(btn) { clearTimeout(btn._t); btn.classList.remove('warn'); btn.textContent = btn._normal; }
