@@ -1053,11 +1053,14 @@ const DEFAULT_CONTEXT_POLICY = {
 };
 let contextPolicy = { ...DEFAULT_CONTEXT_POLICY };
 const WORKSPACE_ID = 'default';
+const TREE_STORAGE_KEY = `inferTree:tree:v2:${WORKSPACE_ID}`;
 let workspaceReady = false;
 let workspaceRevision = 0;
 let workspaceSaveTimer = null;
 let workspaceSaveInFlight = false;
 let workspaceDirty = false;
+let lastCommittedTree = null;
+let workspaceConflict = false;
 const MAX_UNDO = 50;
 const MAX_STORED_REASONING_CHARS = 12000;
 const MAX_STORED_ACTIVITIES = 80;
@@ -1123,8 +1126,21 @@ function currentWorkspaceState() {
     tree: compactStorageMode
       ? compactTreeForStorage()
       : JSON.parse(JSON.stringify({ nodes, rootId, selectedId })),
-    active_paper: null,
   };
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(value[k])).join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
+
+// 忽略键序的深比较，用于树 409 时判断“服务端树是否被其他页面改动过”。
+function deepEqualTree(a, b) {
+  return stableStringify(a || null) === stableStringify(b || null);
 }
 
 function scheduleWorkspaceSave(delay = 450) {
@@ -1139,21 +1155,55 @@ async function flushWorkspaceSave(keepalive = false) {
   workspaceSaveInFlight = true;
   workspaceDirty = false;
   try {
-    const response = await fetch(`/api/workspaces/${WORKSPACE_ID}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state: currentWorkspaceState() }),
-      keepalive,
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
-    workspaceRevision = result.revision || workspaceRevision;
+    await putTreeSave(keepalive, true);
   } catch (error) {
     workspaceDirty = true;
     console.warn('后端 Workspace 保存失败，继续使用浏览器本地副本。', error);
   } finally {
     workspaceSaveInFlight = false;
-    if (workspaceDirty && !keepalive) scheduleWorkspaceSave(1200);
+    if (workspaceDirty && !keepalive && !workspaceConflict) scheduleWorkspaceSave(1200);
+  }
+}
+
+async function putTreeSave(keepalive, allowRetry) {
+  const response = await fetch(`/api/workspaces/${WORKSPACE_ID}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ baseRevision: workspaceRevision, state: currentWorkspaceState() }),
+    keepalive,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (response.ok) {
+    workspaceRevision = result.revision || workspaceRevision;
+    lastCommittedTree = JSON.parse(JSON.stringify(currentWorkspaceState().tree));
+    workspaceConflict = false;
+    return;
+  }
+  if (response.status === 409 && allowRetry) {
+    // 不自动用整棵旧树覆盖：先取服务端树，判断是本页自身操作推进了版本，还是其他页面改了树。
+    const safe = await reconcileTreeConflict();
+    if (safe) return putTreeSave(keepalive, false);
+    throw new Error('workspace tree conflict');
+  }
+  const detail = typeof result.detail === 'string' ? result.detail : `HTTP ${response.status}`;
+  throw new Error(detail);
+}
+
+async function reconcileTreeConflict() {
+  try {
+    const response = await fetch(`/api/workspaces/${WORKSPACE_ID}`);
+    const current = await response.json();
+    if (!response.ok) return false;
+    workspaceRevision = current.revision || workspaceRevision;
+    const serverTree = current.state && current.state.tree ? current.state.tree : null;
+    if (deepEqualTree(serverTree, lastCommittedTree)) {
+      return true; // 仅本页自身操作推进了 revision，重试安全
+    }
+    workspaceConflict = true;
+    reportStorageWarning('检测到其他页面已修改会话树；本地树改动未自动覆盖，请刷新页面同步后再继续。');
+    return false;
+  } catch (_) {
+    return false;
   }
 }
 
@@ -1181,7 +1231,9 @@ async function loadWorkspace() {
       selectedId = result.state.tree.selectedId && nodes[result.state.tree.selectedId]
         ? result.state.tree.selectedId : rootId;
       recoverInterruptedNodes();
-      safeLocalStorageSet('tree', JSON.stringify({ nodes, rootId, selectedId }));
+      lastCommittedTree = JSON.parse(JSON.stringify(result.state.tree));
+      workspaceConflict = false;
+      safeLocalStorageSet(TREE_STORAGE_KEY, JSON.stringify({ nodes, rootId, selectedId }));
       migratedLegacyPaper = migrateLegacyPaper(
         result.state.active_paper || getLegacyActivePaper()
       );
@@ -1215,7 +1267,7 @@ function reportStorageWarning(message) {
 function saveTree() {
   if (!compactStorageMode) {
     try {
-      localStorage.setItem('tree', JSON.stringify({ nodes, rootId, selectedId }));
+      localStorage.setItem(TREE_STORAGE_KEY, JSON.stringify({ nodes, rootId, selectedId }));
       scheduleWorkspaceSave();
       return true;
     } catch (error) {
@@ -1224,7 +1276,7 @@ function saveTree() {
     }
   }
   try {
-    localStorage.setItem('tree', JSON.stringify(compactTreeForStorage()));
+    localStorage.setItem(TREE_STORAGE_KEY, JSON.stringify(compactTreeForStorage()));
     scheduleWorkspaceSave();
     reportStorageWarning('浏览器存储空间不足：已压缩保存思考/活动记录，本次 Agent 请求仍会继续。');
     return true;
@@ -1244,13 +1296,22 @@ function newTree() {
 }
 function loadTree() {
   try {
-    const s = JSON.parse(safeLocalStorageGet('tree', 'null') || 'null');
+    let raw = safeLocalStorageGet(TREE_STORAGE_KEY, 'null');
+    if (!raw || raw === 'null') {
+      const legacy = safeLocalStorageGet('tree', 'null');  // 一次性迁移旧键
+      if (legacy && legacy !== 'null') {
+        raw = legacy;
+        safeLocalStorageSet(TREE_STORAGE_KEY, legacy);
+        safeLocalStorageRemove('tree');
+      }
+    }
+    const s = JSON.parse(raw || 'null');
     validateImportedTree(s);
     nodes = s.nodes; rootId = s.rootId;
     selectedId = s.selectedId && nodes[s.selectedId] ? s.selectedId : rootId;
     recoverInterruptedNodes();
   } catch (_) {
-    safeLocalStorageRemove('tree');
+    safeLocalStorageRemove(TREE_STORAGE_KEY);
     newTree();
   }
 }
