@@ -28,7 +28,7 @@ from .skill_loader import (
     load_skill_catalog,
     load_paper_visual_extractor_skill,
 )
-from .workspace import load_workspace, load_workspace_papers, save_workspace
+from .workspace import apply_operation, load_workspace, load_workspace_papers, save_workspace
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -173,6 +173,13 @@ def update_workspace(
     workspace_id: str, payload: Dict[str, object] = Body(...)
 ) -> Dict[str, object]:
     return save_workspace(workspace_id, payload)
+
+
+@app.post("/api/workspaces/{workspace_id}/operations")
+def run_workspace_operation(
+    workspace_id: str, payload: Dict[str, object] = Body(...)
+) -> Dict[str, object]:
+    return apply_operation(workspace_id, payload)
 
 
 @app.get("/api/workspaces/{workspace_id}/papers")

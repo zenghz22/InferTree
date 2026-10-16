@@ -59,8 +59,8 @@ class WorkspaceTests(unittest.TestCase):
             "backend.workspace.WORKSPACE_ROOT", Path(temporary)
         ):
             client = TestClient(app)
-            first = client.put("/api/workspaces/default", json={"state": workspace_state()})
-            second = client.put("/api/workspaces/default", json={"state": workspace_state()})
+            first = client.put("/api/workspaces/default", json={"baseRevision": 0, "state": workspace_state()})
+            second = client.put("/api/workspaces/default", json={"baseRevision": 1, "state": workspace_state()})
             loaded = client.get("/api/workspaces/default")
             papers = client.get("/api/workspaces/default/papers")
             workspace_dir = Path(temporary) / "default"
@@ -109,7 +109,7 @@ class WorkspaceTests(unittest.TestCase):
             "backend.workspace.WORKSPACE_ROOT", Path(temporary)
         ):
             response = TestClient(app).put(
-                "/api/workspaces/default", json={"state": state}
+                "/api/workspaces/default", json={"baseRevision": 0, "state": state}
             )
         self.assertEqual(422, response.status_code)
 
@@ -124,7 +124,7 @@ class WorkspaceTests(unittest.TestCase):
             "backend.workspace.WORKSPACE_ROOT", Path(temporary)
         ):
             response = TestClient(app).put(
-                "/api/workspaces/default", json={"state": state}
+                "/api/workspaces/default", json={"baseRevision": 0, "state": state}
             )
         self.assertEqual(422, response.status_code)
 
