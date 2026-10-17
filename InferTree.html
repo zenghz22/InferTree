@@ -194,6 +194,13 @@ window.MathJax = {
   .doc-block-preview { border: 1px dashed var(--border); border-radius: 6px; padding: 6px 9px;
     background: var(--bg); font-size: 13px; max-height: 340px; overflow-y: auto; }
   .doc-block-preview[hidden] { display: none; }
+  .doc-evidence { border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px;
+    font-size: 11.5px; background: var(--bg); cursor: pointer; }
+  .doc-evidence.unlocated { border-style: dashed; opacity: .8; }
+  .doc-evidence-attach, .doc-ask { font-size: 11.5px; }
+  .doc-scope { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    border: 1px solid var(--accent); border-radius: 8px; padding: 3px 8px; margin-top: 4px; }
+  .doc-scope[hidden] { display: none; }
   .doc-block-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .doc-source { font-size: 11px; padding: 2px 7px; border-radius: 11px; }
   .doc-draft-restore { font-size: 11px; padding: 2px 7px; border-radius: 11px;
@@ -507,6 +514,7 @@ window.MathJax = {
         <button type="button" data-action="visuals" title="提取主机制图与关键结果图">🖼 图表</button>
       </div>
       <div class="clabel" id="branchLabel">从 <b>根</b> 继续提问（将创建新分支）</div>
+      <div class="clabel doc-scope" id="docScopeBar" hidden></div>
       <div class="row">
         <textarea id="input" placeholder="输入问题或补充内容；点选项/快捷按钮会自动拼入"></textarea>
         <button id="sendBtn" class="primary">发送</button>
@@ -527,6 +535,7 @@ const els = {
   status: $('status'), settings: $('settings'),
   wrap: $('treeWrap'), canvas: $('treeCanvas'), svg: $('edges'),
   convo: $('convo'), pathLabel: $('pathLabel'), branchLabel: $('branchLabel'),
+  docScopeBar: $('docScopeBar'),
   turnNav: $('turnNav'),
   input: $('input'), send: $('sendBtn'), stop: $('stopBtn'),
   regen: $('regenBtn'), del: $('delBtn'),
@@ -1127,6 +1136,7 @@ els.system.addEventListener('change', () => {            // 失焦：把 system 
 let nodes = {}, rootId = null, selectedId = null;
 let streamingId = null;    // 当前正在流式生成的节点 id（同一时刻仅一个）
 let localSelection = null;
+let pendingDocScope = null;
 const MAX_LOCAL_EXCERPT_CHARS = 6000;
 const DEFAULT_CONTEXT_POLICY = {
   maxChars: 60000, recentTurns: 4, maxMessageChars: 12000, outlineChars: 4000,
@@ -1504,6 +1514,56 @@ function buildContext(targetId, extraQuery) {
 }
 
 function buildMessages(targetId, extraQuery) { return buildContext(targetId, extraQuery).messages; }
+
+// P3：文档作用域请求只发送引用（workspaceId/documentId/blockId/anchor/mode）。
+// 正文、证据、论文与版本全部由后端从 Workspace 解析，因此不会带上其他分支的回答。
+function buildDocumentScopeContext(node) {
+  const question = modelQueryForNode(node);
+  return {
+    messages: [{ role: 'user', content: question }],
+    stats: {
+      strategy: 'document-scope-v1', total_turns: 0,
+      included_turns: 0, omitted_turns: 0, truncated_messages: 0,
+      estimated_chars: question.length, budget_chars: contextPolicy.maxChars,
+    },
+    document_scope: node.documentScope,
+  };
+}
+
+function renderDocScopeBar() {
+  const bar = els.docScopeBar;
+  if (!bar) return;
+  if (!pendingDocScope) { bar.hidden = true; bar.replaceChildren(); return; }
+  const doc = documents[pendingDocScope.documentId];
+  const block = doc && doc.blocks ? doc.blocks[pendingDocScope.blockId] : null;
+  const title = document.createElement('span');
+  title.className = 'local-title';
+  title.textContent = '文档作用域';
+  const preview = document.createElement('span');
+  preview.className = 'local-preview';
+  preview.textContent = `文档《${doc?.title || '?'}》/ 块「${block?.title || '整篇'}」· 仅发送本块正文与证据`;
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'clear-local';
+  clear.title = '取消文档作用域，回到普通分支提问';
+  clear.setAttribute('aria-label', '取消文档作用域');
+  clear.textContent = '×';
+  clear.addEventListener('click', () => clearPendingDocScope());
+  bar.hidden = false;
+  bar.replaceChildren(title, preview, clear);
+}
+
+function setPendingDocScope(scope) {
+  pendingDocScope = scope ? { ...scope } : null;
+  if (pendingDocScope) clearLocalSelection(false);
+  renderDocScopeBar();
+  if (pendingDocScope && els.input) els.input.focus();
+}
+
+function clearPendingDocScope() {
+  pendingDocScope = null;
+  renderDocScopeBar();
+}
 
 function contextBadge(nodeId = selectedId) {
   const stats = buildContext(nodeId, null).stats;
@@ -2064,6 +2124,8 @@ function closePdfViewer() {
   delete els.pdfFrame.dataset.paperId;
 }
 
+let pdfViewState = { paperId: null, page: 1 };
+
 function openPdfAtPage(page = 1, paper = null) {
   const selectedPaper = paper || paperForNode(selectedId);
   if (!selectedPaper?.paperId) {
@@ -2071,6 +2133,7 @@ function openPdfAtPage(page = 1, paper = null) {
     return;
   }
   const pageNumber = Math.max(1, Math.floor(Number(page) || 1));
+  pdfViewState = { paperId: selectedPaper.paperId, page: pageNumber };
   els.pdfPanel.hidden = false;
   els.pdfTitle.textContent = selectedPaper.filename || selectedPaper.title || '论文 PDF';
   els.pdfTitle.title = selectedPaper.filename || selectedPaper.title || '论文 PDF';
@@ -2177,6 +2240,7 @@ function buildChild(parent, text, excerpt, opts = {}) {
   }
   child.modelId = els.model.value;
   child.reasoningControl = currentReasoningControl();
+  if (opts.documentScope) child.documentScope = { ...opts.documentScope };
   return child;
 }
 
@@ -2199,7 +2263,8 @@ async function sendBranch() {
   const text = els.input.value.trim();
   if (!text || !apiReady()) return;
   const excerpt = localSelection ? { ...localSelection } : null;
-  const parent = nodes[excerpt?.sourceNodeId] || nodes[selectedId];
+  const docScope = pendingDocScope ? { ...pendingDocScope } : null;
+  const parent = docScope ? nodes[selectedId] : (nodes[excerpt?.sourceNodeId] || nodes[selectedId]);
   const branchPaper = paperForNode(parent.id);
   if (els.skill.value === 'paper-visual-extractor' && !branchPaper?.paperId) {
     alert('Paper Visual Extractor 需要先上传或下载一篇 PDF 论文。');
@@ -2207,7 +2272,8 @@ async function sendBranch() {
   }
   if (streamingId) { alert('已有生成任务在进行，请等待或点击"停止"'); return; }
   els.input.value = '';
-  await sendAsChild(parent, text, { excerpt });
+  if (docScope) clearPendingDocScope();
+  await sendAsChild(parent, text, { excerpt, documentScope: docScope });
 }
 
 // 快捷动作：无需手写 prompt，直接按意图调用对应 Skill
@@ -2364,7 +2430,9 @@ async function runAnswer(node) {
     }, STREAM_INACTIVITY_MS);
   };
   resetInactivityTimer();
-  const context = buildContext(node.parentId, modelQueryForNode(node));
+  const context = node.documentScope
+    ? buildDocumentScopeContext(node)
+    : buildContext(node.parentId, modelQueryForNode(node));
   const msgs = context.messages;
   node.contextStats = context.stats;
   let acc = '', accR = '', searches = [];
@@ -2377,10 +2445,14 @@ async function runAnswer(node) {
         reasoning_control: node.reasoningControl || currentReasoningControl(),
         context_meta: context.stats,
       };
+      if (context.document_scope) body.document_scope = context.document_scope;
       const selectedSkill = node.skill || '';
       if (selectedSkill) {
         body.skill = selectedSkill;
-        body.paper_id = node.paperId || null;
+        // 文档作用域绝不继承分支绑定的 PDF：论文只能来自本块证据的显式 paperId。
+        body.paper_id = context.document_scope
+          ? (context.document_scope.paperId || null)
+          : (node.paperId || null);
         if (['auto', 'paper-reviewer'].includes(selectedSkill)) body.skill_mode = node.skillMode || 'auto';
       }
       const resp = await fetch(chatUrl(), {
@@ -2820,6 +2892,7 @@ $('docTitleInput').addEventListener('keydown', (event) => {
 
 /* ===================== 调研文档（P2） ===================== */
 let documents = {};
+let evidenceById = {};
 let selectedDocId = null;
 let docUndoStack = [];
 let operationSeq = 0;
@@ -2853,6 +2926,7 @@ function openDocPanel() {
 
 function closeDocPanel() {
   $('docPanel').hidden = true;
+  clearPendingDocScope();
   document.body.classList.remove('doc-open');
   if (mapWasOpenBeforeDocs) {
     document.body.classList.add('map-open');
@@ -2876,6 +2950,7 @@ function setDocStatus(text, kind) {
 function loadDocumentsFromState(state) {
   const next = state && typeof state.documents === 'object' && state.documents ? state.documents : {};
   documents = next;
+  evidenceById = state && typeof state.evidence === 'object' && state.evidence ? state.evidence : {};
   if (selectedDocId && !documents[selectedDocId]) selectedDocId = null;
   if (!selectedDocId && docList().length) selectedDocId = docList()[0].id;
 }
@@ -3144,6 +3219,41 @@ function renderBlockElement(doc, block, index, total) {
     footer.appendChild(src);
   });
 
+  // P3：证据引用——每条证据带显式 paperId 与页码，点击只打开该论文的对应页。
+  (Array.isArray(block.evidenceIds) ? block.evidenceIds : []).forEach((evidenceId) => {
+    const evidence = evidenceById[evidenceId];
+    if (!evidence || !evidence.paperId) return;
+    const kind = evidence.sourceType === 'figure' ? '图' : (evidence.sourceType === 'table' ? '表' : '正文');
+    const where = evidence.page != null ? `p.${evidence.pageLabel || evidence.page}` : '页码未知';
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'doc-evidence' + (evidence.locatorStatus === 'located' ? '' : ' unlocated');
+    chip.textContent = `证据 · ${kind} ${where}`;
+    chip.title = [
+      `${evidence.paperId.slice(0, 12)}… ${where}`,
+      evidence.locatorStatus === 'located' ? '' : `定位状态：${evidence.locatorStatus}`,
+      evidence.quote ? compactText(evidence.quote, 120) : '',
+    ].filter(Boolean).join('\n');
+    chip.addEventListener('click', () => openEvidence(evidence));
+    footer.appendChild(chip);
+  });
+
+  const attach = document.createElement('button');
+  attach.type = 'button';
+  attach.className = 'doc-evidence-attach';
+  attach.textContent = '＋ 当前页为证据';
+  attach.title = '把 PDF 面板当前页作为证据挂到本块（只改引用，不改正文）';
+  attach.addEventListener('click', () => attachPageEvidence(doc.id, block.id));
+  footer.appendChild(attach);
+
+  const ask = document.createElement('button');
+  ask.type = 'button';
+  ask.className = 'doc-ask';
+  ask.textContent = '就此提问';
+  ask.title = '只把本块正文与证据发给 agent，不携带其他分支内容';
+  ask.addEventListener('click', () => askAboutBlock(doc.id, block.id));
+  footer.appendChild(ask);
+
   if (footer.childNodes.length) wrap.appendChild(footer);
 
   blockInputs.set(key, { titleInput, mdInput, statusEl });
@@ -3156,6 +3266,69 @@ function renderBlockElement(doc, block, index, total) {
   mdInput.addEventListener('input', onChange);
 
   return wrap;
+}
+
+function blockPaperIds(block) {
+  const ids = [];
+  for (const evidenceId of block?.evidenceIds || []) {
+    const paperId = evidenceById[evidenceId]?.paperId;
+    if (paperId && !ids.includes(paperId)) ids.push(paperId);
+  }
+  return ids;
+}
+
+// 明确使用证据自带的 paperId：绝不回退到当前分支绑定的 PDF。
+function openEvidence(evidence) {
+  if (!evidence || !evidence.paperId) return;
+  const known = paperMetadataForId(evidence.paperId) || {};
+  openPdfAtPage(evidence.page || 1, { ...known, paperId: evidence.paperId });
+}
+
+async function attachPageEvidence(docId, blockId) {
+  const doc = documents[docId];
+  const block = doc && doc.blocks ? doc.blocks[blockId] : null;
+  if (!block) return;
+  const paperId = pdfViewState.paperId || (els.pdfFrame && els.pdfFrame.dataset.paperId);
+  if (!paperId) {
+    setDocStatus('请先在 PDF 面板打开一篇论文，再挂证据。', 'error');
+    return;
+  }
+  const page = Math.max(1, Math.floor(Number(pdfViewState.page) || 1));
+  setDocStatus('挂载证据中…', '');
+  try {
+    const created = await runOperation('evidence.upsert', {
+      paperId, sourceType: 'paper', page,
+      pageLabel: String(page), locatorStatus: 'located',
+    });
+    const evidenceId = created.result.evidenceId;
+    const nextIds = Array.isArray(block.evidenceIds) ? [...block.evidenceIds] : [];
+    if (!nextIds.includes(evidenceId)) nextIds.push(evidenceId);
+    await runOperation('block.evidence.set', {
+      documentId: docId, blockId, evidenceIds: nextIds,
+    });
+    await refreshWorkspaceMeta();
+    renderDocEditor();
+    setDocStatus(`已挂载证据（第 ${page} 页）`, 'ok');
+  } catch (error) {
+    setDocStatus(`挂载证据失败：${error.message}`, 'error');
+  }
+}
+
+// 让 agent 只在本块范围内追问：请求只带引用，正文/证据/论文由后端解析。
+function askAboutBlock(docId, blockId) {
+  const doc = documents[docId];
+  const block = doc && doc.blocks ? doc.blocks[blockId] : null;
+  if (!doc || !block) return;
+  if (!apiReady()) return;
+  if (streamingId) { alert('已有生成任务在进行，请等待或点击“停止”'); return; }
+  const paperIds = blockPaperIds(block);
+  setPendingDocScope({
+    workspaceId: WORKSPACE_ID,
+    documentId: docId,
+    blockId,
+    mode: 'followup',
+    paperId: paperIds.length === 1 ? paperIds[0] : null,
+  });
 }
 
 function renderDocOutline() {

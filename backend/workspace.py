@@ -51,6 +51,7 @@ ALLOWED_OPS = {
     "block.update",
     "block.move",
     "block.remove",
+    "block.evidence.set",
     "evidence.upsert",
     "proposal.create",
     "proposal.accept",
@@ -928,6 +929,44 @@ def _execute_operation(
             "documentId": doc_id,
             "blockId": block_id,
             "removed": True,
+            "documentRevision": doc["revision"],
+        }
+
+    if op == "block.evidence.set":
+        doc_id = params.get("documentId")
+        doc = documents.get(doc_id)
+        if doc is None:
+            raise HTTPException(status_code=422, detail="Document does not exist.")
+        block_id = params.get("blockId")
+        block = doc["blocks"].get(block_id)
+        if block is None:
+            raise HTTPException(status_code=422, detail="Block does not exist.")
+        evidence_ids = params.get("evidenceIds")
+        if not isinstance(evidence_ids, list) or len(evidence_ids) > MAX_BLOCK_EVIDENCE_IDS:
+            raise HTTPException(status_code=422, detail="block.evidence.set evidenceIds is invalid.")
+        if len(set(evidence_ids)) != len(evidence_ids):
+            raise HTTPException(status_code=422, detail="block.evidence.set evidenceIds contains duplicates.")
+        for ev_id in evidence_ids:
+            if not isinstance(ev_id, str) or ev_id not in evidence:
+                raise HTTPException(
+                    status_code=422, detail=f"block.evidence.set references unknown evidence {ev_id}."
+                )
+        # 只改变引用关系、不改正文：不推进块 revision，避免让既有提案基线失效。
+        block["evidenceIds"] = [str(i) for i in evidence_ids]
+        block["evidenceReviewState"] = params.get(
+            "evidenceReviewState", block.get("evidenceReviewState", "unreviewed")
+        )
+        if block["evidenceReviewState"] not in EVIDENCE_REVIEW_STATES:
+            raise HTTPException(status_code=422, detail="block.evidence.set evidenceReviewState is invalid.")
+        block["updatedAt"] = now
+        block["updatedBy"] = "human"
+        doc["revision"] += 1
+        doc["updatedAt"] = now
+        return new_state, {
+            "documentId": doc_id,
+            "blockId": block_id,
+            "evidenceIds": list(block["evidenceIds"]),
+            "blockRevision": block["revision"],
             "documentRevision": doc["revision"],
         }
 
