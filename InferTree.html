@@ -154,6 +154,57 @@ window.MathJax = {
     text-underline-offset: 2px; cursor: pointer; }
   .page-citation:hover { background: color-mix(in srgb, var(--accent) 22%, var(--bg)); border: 0; }
 
+  /* 调研文档 */
+  #docPanel { width: min(46vw, 820px); min-width: 380px; flex: 0 0 auto;
+    background: var(--panel); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; min-height: 0; }
+  #docPanel[hidden] { display: none; }
+  #docHead { min-height: 40px; padding: 6px 9px; display: flex; align-items: center; gap: 7px;
+    border-bottom: 1px solid var(--border); }
+  #docHeadTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 13px; font-weight: 600; }
+  #docHead button { font-size: 12px; padding: 4px 8px; }
+  #docListBar { display: flex; gap: 6px; padding: 7px 9px; align-items: center;
+    border-bottom: 1px solid var(--border); }
+  #docList { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0; scrollbar-width: thin; }
+  .doc-tab { font-size: 12px; padding: 4px 9px; border-radius: 13px; white-space: nowrap;
+    max-width: 168px; overflow: hidden; text-overflow: ellipsis; }
+  .doc-tab.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+  #docBody { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 10px; }
+  #docTitleRow { display: flex; gap: 8px; align-items: center; }
+  #docTitleInput { flex: 1; font-size: 15px; font-weight: 600; min-width: 0; }
+  #docSaveStatus { white-space: nowrap; font-size: 11px; }
+  #docOutlineWrap { font-size: 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); padding: 6px 10px; }
+  #docOutlineWrap summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  #docOutline { margin: 6px 0 0; padding-left: 18px; }
+  #docOutline li { cursor: pointer; padding: 1px 0; }
+  #docOutline li:hover { color: var(--accent); text-decoration: underline; }
+  #docBlocks { display: flex; flex-direction: column; gap: 10px; }
+  .doc-block { border: 1px solid var(--border); border-radius: 9px; background: var(--surface);
+    padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .doc-block-head { display: flex; gap: 6px; align-items: center; }
+  .doc-block-index { font-size: 11px; color: var(--muted); min-width: 16px; }
+  .doc-block-title { flex: 1; font-size: 13px; font-weight: 600; padding: 4px 7px; min-width: 0; }
+  .doc-block-status { font-size: 11px; white-space: nowrap; }
+  .doc-block-head button { padding: 3px 7px; font-size: 12px; }
+  .doc-block-md { width: 100%; resize: vertical; min-height: 70px;
+    font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; line-height: 1.55; }
+  .doc-block-preview { border: 1px dashed var(--border); border-radius: 6px; padding: 6px 9px;
+    background: var(--bg); font-size: 13px; max-height: 340px; overflow-y: auto; }
+  .doc-block-preview[hidden] { display: none; }
+  .doc-block-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .doc-source { font-size: 11px; padding: 2px 7px; border-radius: 11px; }
+  .doc-draft-restore { font-size: 11px; padding: 2px 7px; border-radius: 11px;
+    border-color: var(--local-accent); color: var(--local-accent); }
+  .doc-figure img { max-width: 100%; border: 1px solid var(--border); border-radius: 6px; }
+  .doc-empty { padding: 10px 4px; }
+  #docActions { display: flex; gap: 8px; align-items: center; }
+  body.doc-open #treeWrap { display: none; }
+  body.doc-open #resizer { display: none; }
+  body.doc-open #side { flex: 1 1 auto; }
+
   /* 会话侧栏 */
   #side { flex: 1 1 auto; min-width: 0; background: var(--panel);
     display: flex; flex-direction: column; min-height: 0; position: relative; }
@@ -314,6 +365,7 @@ window.MathJax = {
   <span class="spacer"></span>
   <button id="newTreeBtn" title="新建对话树">新建</button>
   <button id="toggleMap" title="显示/隐藏结构地图">🗺 地图</button>
+  <button id="toggleDocs" title="显示/隐藏调研文档">📄 文档</button>
   <button id="exportMd" title="导出当前路径 Markdown">导出 MD</button>
   <button id="exportJson" title="导出完整对话树 JSON">导出 JSON</button>
   <button id="importBtn" title="导入对话树 JSON">导入</button>
@@ -376,6 +428,33 @@ window.MathJax = {
     <iframe id="pdfFrame" title="当前分支论文 PDF" loading="lazy"></iframe>
   </section>
 
+  <section id="docPanel" aria-label="调研文档" hidden>
+    <div id="docHead">
+      <span id="docHeadTitle">调研文档</span>
+      <button id="docUndoBtn" title="撤销上一步文档操作" disabled>↩ 撤销</button>
+      <button id="closeDocBtn" title="关闭文档面板" aria-label="关闭文档面板">×</button>
+    </div>
+    <div id="docListBar">
+      <div id="docList"></div>
+      <button id="newDocBtn" title="新建文档">＋ 新建</button>
+    </div>
+    <div id="docBody">
+      <div id="docTitleRow">
+        <input id="docTitleInput" type="text" placeholder="文档标题" maxlength="200" />
+        <span id="docSaveStatus" class="hint">—</span>
+      </div>
+      <details id="docOutlineWrap" open>
+        <summary>大纲（按内容块标题，确定性生成）</summary>
+        <ol id="docOutline"></ol>
+      </details>
+      <div id="docBlocks"></div>
+      <div id="docActions">
+        <button id="addBlockBtn">＋ 段落</button>
+        <span class="hint" id="docHint">编辑内容块会自动保存；保存失败会在右上角提示。</span>
+      </div>
+    </div>
+  </section>
+
   <div id="resizer"></div>
 
   <div id="side">
@@ -384,6 +463,7 @@ window.MathJax = {
       <button id="regenBtn">重新回答</button>
       <button id="delBtn">删除节点</button>
       <button id="viewPdfBtn" hidden>阅读 PDF</button>
+      <button id="addToDocBtn" title="把当前回答加入调研文档">＋ 加入文档</button>
     </div>
     <div id="convoShell">
       <div id="convo"></div>
@@ -1233,6 +1313,7 @@ async function loadWorkspace() {
       recoverInterruptedNodes();
       lastCommittedTree = JSON.parse(JSON.stringify(result.state.tree));
       workspaceConflict = false;
+      loadDocumentsFromState(result.state);
       safeLocalStorageSet(TREE_STORAGE_KEY, JSON.stringify({ nodes, rootId, selectedId }));
       migratedLegacyPaper = migrateLegacyPaper(
         result.state.active_paper || getLegacyActivePaper()
@@ -1241,10 +1322,12 @@ async function loadWorkspace() {
       undoStack = []; redoStack = [];
       renderAll(); fitView();
     } else {
+      loadDocumentsFromState(null);
       migratedLegacyPaper = migrateLegacyPaper(getLegacyActivePaper());
       if (migratedLegacyPaper) renderAll();
     }
     workspaceReady = true;
+    if (docPanelIsOpen()) renderDocPanel();
     if (!result.exists || migratedLegacyPaper || result.state?.active_paper) {
       scheduleWorkspaceSave(0);
     }
@@ -2722,6 +2805,600 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); redo(); }
 });
 window.addEventListener('pagehide', () => flushWorkspaceSave(true));
+
+/* ---------- 调研文档：事件绑定 ---------- */
+$('toggleDocs').addEventListener('click', toggleDocPanel);
+$('closeDocBtn').addEventListener('click', closeDocPanel);
+$('newDocBtn').addEventListener('click', createDocument);
+$('docUndoBtn').addEventListener('click', undoDocument);
+$('addBlockBtn').addEventListener('click', addBlock);
+$('addToDocBtn').addEventListener('click', addAnswerToDocument);
+$('docTitleInput').addEventListener('change', () => renameDocument($('docTitleInput').value));
+$('docTitleInput').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') { event.preventDefault(); $('docTitleInput').blur(); }
+});
+
+/* ===================== 调研文档（P2） ===================== */
+let documents = {};
+let selectedDocId = null;
+let docUndoStack = [];
+let operationSeq = 0;
+let mapWasOpenBeforeDocs = false;
+const docDraftTimers = new Map();
+const blockInputs = new Map();
+
+function newOperationId() {
+  operationSeq += 1;
+  return `op-${Date.now().toString(36)}-${operationSeq.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function docList() {
+  return Object.values(documents).sort((a, b) =>
+    String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+}
+
+function docPanelIsOpen() {
+  const panel = $('docPanel');
+  return !!panel && !panel.hidden;
+}
+
+function openDocPanel() {
+  mapWasOpenBeforeDocs = document.body.classList.contains('map-open');
+  document.body.classList.remove('map-open');
+  document.body.classList.add('doc-open');
+  $('docPanel').hidden = false;
+  applyMapLayout();
+  renderDocPanel();
+}
+
+function closeDocPanel() {
+  $('docPanel').hidden = true;
+  document.body.classList.remove('doc-open');
+  if (mapWasOpenBeforeDocs) {
+    document.body.classList.add('map-open');
+    safeLocalStorageSet('mapOpen', '1');
+  }
+  mapWasOpenBeforeDocs = false;
+  applyMapLayout();
+}
+
+function toggleDocPanel() {
+  if (docPanelIsOpen()) closeDocPanel(); else openDocPanel();
+}
+
+function setDocStatus(text, kind) {
+  const el = $('docSaveStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'hint' + (kind === 'error' ? ' err' : '');
+}
+
+function loadDocumentsFromState(state) {
+  const next = state && typeof state.documents === 'object' && state.documents ? state.documents : {};
+  documents = next;
+  if (selectedDocId && !documents[selectedDocId]) selectedDocId = null;
+  if (!selectedDocId && docList().length) selectedDocId = docList()[0].id;
+}
+
+async function fetchWorkspaceMeta() {
+  const response = await fetch(`/api/workspaces/${WORKSPACE_ID}`);
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+  workspaceRevision = result.revision || 0;
+  lastCommittedTree = result.state && result.state.tree
+    ? JSON.parse(JSON.stringify(result.state.tree)) : null;
+  loadDocumentsFromState(result.state);
+  return result;
+}
+
+async function refreshWorkspaceMeta() {
+  try { await fetchWorkspaceMeta(); return true; }
+  catch (error) { console.warn('同步文档状态失败。', error); return false; }
+}
+
+// 统一 operation 调度：携带 baseRevision；409 时先同步版本再以同一 operationId 幂等重试一次。
+async function runOperation(op, params = {}) {
+  const operationId = newOperationId();
+  let attempt = 0;
+  while (true) {
+    const response = await fetch(`/api/workspaces/${WORKSPACE_ID}/operations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operationId, baseRevision: workspaceRevision, op, ...params }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.ok) {
+      workspaceRevision = result.current_revision ?? workspaceRevision;
+      return result;
+    }
+    const detail = result.detail;
+    const message = typeof detail === 'string'
+      ? detail
+      : (detail && detail.message ? String(detail.message) : `HTTP ${response.status}`);
+    if (response.status === 409 && detail && detail.proposal_status === 'conflicted') {
+      throw Object.assign(new Error('提案基线已变化，已被标记为冲突'), { code: 'proposal_conflicted' });
+    }
+    if (response.status === 409 && attempt < 1) {
+      attempt += 1;
+      try { await fetchWorkspaceMeta(); } catch (_) { /* 保持原版本，重试仍可能失败 */ }
+      continue;
+    }
+    throw Object.assign(new Error(message), { code: 'operation_failed', status: response.status });
+  }
+}
+
+/* ---------- 草稿缓存 ---------- */
+function draftKey(docId, blockId) {
+  return `inferTree:draft:v1:${WORKSPACE_ID}:${docId}:${blockId}`;
+}
+function cacheDraft(docId, blockId, value) {
+  try { localStorage.setItem(draftKey(docId, blockId), JSON.stringify(value)); } catch (_) { /* ignore */ }
+}
+function readDraft(docId, blockId) {
+  try {
+    const raw = localStorage.getItem(draftKey(docId, blockId));
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+function clearDraft(docId, blockId) {
+  try { localStorage.removeItem(draftKey(docId, blockId)); } catch (_) { /* ignore */ }
+}
+
+/* ---------- 撤销栈 ---------- */
+function pushDocUndo(entry) {
+  docUndoStack.push(entry);
+  if (docUndoStack.length > 50) docUndoStack.shift();
+  updateDocUndoBtn();
+}
+function updateDocUndoBtn() {
+  const btn = $('docUndoBtn');
+  if (btn) btn.disabled = docUndoStack.length === 0;
+}
+
+/* ---------- 渲染 ---------- */
+function renderDocPanel() {
+  if (!$('docPanel')) return;
+  renderDocList();
+  renderDocEditor();
+}
+
+function renderDocList() {
+  const list = $('docList');
+  if (!list) return;
+  list.innerHTML = '';
+  const docs = docList();
+  if (!docs.length) {
+    const empty = document.createElement('span');
+    empty.className = 'hint';
+    empty.textContent = '还没有文档，点“＋ 新建”。';
+    list.appendChild(empty);
+    return;
+  }
+  docs.forEach((doc) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'doc-tab' + (doc.id === selectedDocId ? ' active' : '');
+    button.textContent = doc.title || '未命名文档';
+    button.title = doc.title || '未命名文档';
+    button.addEventListener('click', () => { selectedDocId = doc.id; renderDocPanel(); });
+    list.appendChild(button);
+  });
+}
+
+function renderDocEditor() {
+  const titleInput = $('docTitleInput');
+  const container = $('docBlocks');
+  if (!titleInput || !container) return;
+  blockInputs.clear();
+  const doc = documents[selectedDocId];
+  if (!doc) {
+    titleInput.value = '';
+    titleInput.disabled = true;
+    container.innerHTML = '';
+    $('docOutline').innerHTML = '';
+    setDocStatus('新建或选择一个文档。', '');
+    updateDocUndoBtn();
+    return;
+  }
+  titleInput.disabled = false;
+  if (document.activeElement !== titleInput) titleInput.value = doc.title || '';
+  container.innerHTML = '';
+  const order = Array.isArray(doc.blockOrder) ? doc.blockOrder : [];
+  if (!order.length) {
+    const empty = document.createElement('div');
+    empty.className = 'hint doc-empty';
+    empty.textContent = '还没有内容块。点“＋ 段落”，或选中某条回答后点“＋ 加入文档”。';
+    container.appendChild(empty);
+  }
+  order.forEach((blockId, index) => {
+    const block = doc.blocks && doc.blocks[blockId];
+    if (block) container.appendChild(renderBlockElement(doc, block, index, order.length));
+  });
+  renderDocOutline();
+  updateDocUndoBtn();
+}
+
+function renderBlockElement(doc, block, index, total) {
+  const key = `${doc.id}:${block.id}`;
+  const wrap = document.createElement('div');
+  wrap.className = 'doc-block';
+
+  const head = document.createElement('div');
+  head.className = 'doc-block-head';
+  const orderLabel = document.createElement('span');
+  orderLabel.className = 'doc-block-index';
+  orderLabel.textContent = String(index + 1);
+  head.appendChild(orderLabel);
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.className = 'doc-block-title';
+  titleInput.maxLength = 200;
+  titleInput.placeholder = '块标题';
+  titleInput.value = block.title || '';
+  head.appendChild(titleInput);
+
+  const statusEl = document.createElement('span');
+  statusEl.className = 'hint doc-block-status';
+  statusEl.textContent = block.updatedBy === 'agent' ? 'AI 已采纳' : '';
+  head.appendChild(statusEl);
+
+  const up = document.createElement('button');
+  up.type = 'button'; up.textContent = '↑'; up.title = '上移';
+  up.disabled = index === 0;
+  up.addEventListener('click', () => moveBlock(doc.id, block.id, index - 1));
+  head.appendChild(up);
+
+  const down = document.createElement('button');
+  down.type = 'button'; down.textContent = '↓'; down.title = '下移';
+  down.disabled = index >= total - 1;
+  down.addEventListener('click', () => moveBlock(doc.id, block.id, index + 1));
+  head.appendChild(down);
+
+  const del = document.createElement('button');
+  del.type = 'button'; del.textContent = '✕'; del.title = '移出文档';
+  del.addEventListener('click', () => removeBlock(doc.id, block.id));
+  head.appendChild(del);
+
+  wrap.appendChild(head);
+
+  if (block.type === 'figure') {
+    const fig = document.createElement('div');
+    fig.className = 'doc-figure';
+    const asset = block.assetRef || {};
+    if (asset.paperId && asset.visualId) {
+      const img = document.createElement('img');
+      img.alt = block.title || '图表';
+      img.loading = 'lazy';
+      img.src = `/api/papers/${asset.paperId}/visuals/${asset.visualId}.png`;
+      img.addEventListener('error', () => {
+        img.replaceWith(Object.assign(document.createElement('span'), {
+          className: 'hint',
+          textContent: `图表资源缺失（${asset.visualId}），不会回退到其他图。`,
+        }));
+      });
+      fig.appendChild(img);
+    } else {
+      const hint = document.createElement('span');
+      hint.className = 'hint';
+      hint.textContent = '图表资源缺失（未绑定 paperId + visualId）。';
+      fig.appendChild(hint);
+    }
+    wrap.appendChild(fig);
+  }
+
+  const mdInput = document.createElement('textarea');
+  mdInput.className = 'doc-block-md';
+  mdInput.rows = 4;
+  mdInput.value = block.markdown || '';
+  mdInput.placeholder = block.type === 'figure' ? '图表说明' : 'Markdown 正文';
+  wrap.appendChild(mdInput);
+
+  const preview = document.createElement('div');
+  preview.className = 'md doc-block-preview';
+  preview.hidden = true;
+  wrap.appendChild(preview);
+
+  const footer = document.createElement('div');
+  footer.className = 'doc-block-foot';
+
+  const previewToggle = document.createElement('button');
+  previewToggle.type = 'button';
+  previewToggle.textContent = '预览';
+  previewToggle.title = '在编辑与渲染预览之间切换';
+  previewToggle.addEventListener('click', () => {
+    const showPreview = preview.hidden;
+    preview.hidden = !showPreview;
+    mdInput.hidden = showPreview;
+    previewToggle.textContent = showPreview ? '编辑' : '预览';
+    if (showPreview) preview.innerHTML = renderMd(mdInput.value);
+  });
+  footer.appendChild(previewToggle);
+
+  const draft = readDraft(doc.id, block.id);
+  if (draft && ((draft.markdown ?? '') !== (block.markdown || '')
+      || (draft.title ?? '') !== (block.title || ''))) {
+    const restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'doc-draft-restore';
+    restore.textContent = '⚑ 恢复未保存草稿';
+    restore.addEventListener('click', () => {
+      titleInput.value = draft.title ?? block.title ?? '';
+      mdInput.value = draft.markdown ?? block.markdown ?? '';
+      setDocStatus('已恢复草稿，等待保存…', '');
+      scheduleBlockSave(doc.id, block.id);
+    });
+    footer.appendChild(restore);
+  }
+
+  (Array.isArray(block.sourceRefs) ? block.sourceRefs : []).forEach((ref) => {
+    if (!ref || !ref.nodeId) return;
+    const sourceNode = nodes[ref.nodeId];
+    if (!sourceNode) return;
+    const src = document.createElement('button');
+    src.type = 'button';
+    src.className = 'doc-source';
+    src.textContent = `来源：${sourceNode.title || '节点'}`;
+    src.title = '跳转到来源节点';
+    src.addEventListener('click', () => selectNode(ref.nodeId));
+    footer.appendChild(src);
+  });
+
+  if (footer.childNodes.length) wrap.appendChild(footer);
+
+  blockInputs.set(key, { titleInput, mdInput, statusEl });
+
+  const onChange = () => {
+    cacheDraft(doc.id, block.id, { title: titleInput.value, markdown: mdInput.value });
+    scheduleBlockSave(doc.id, block.id);
+  };
+  titleInput.addEventListener('input', onChange);
+  mdInput.addEventListener('input', onChange);
+
+  return wrap;
+}
+
+function renderDocOutline() {
+  const outline = $('docOutline');
+  if (!outline) return;
+  outline.innerHTML = '';
+  const doc = documents[selectedDocId];
+  if (!doc) return;
+  const order = Array.isArray(doc.blockOrder) ? doc.blockOrder : [];
+  order.forEach((blockId) => {
+    const block = doc.blocks && doc.blocks[blockId];
+    if (!block) return;
+    const li = document.createElement('li');
+    li.textContent = block.title || '（无标题）';
+    li.title = '滚动到该内容块';
+    li.addEventListener('click', () => {
+      const entry = blockInputs.get(`${doc.id}:${blockId}`);
+      if (entry) entry.mdInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    outline.appendChild(li);
+  });
+}
+
+/* ---------- 保存 ---------- */
+function scheduleBlockSave(docId, blockId, delay = 900) {
+  const key = `${docId}:${blockId}`;
+  const existing = docDraftTimers.get(key);
+  if (existing) clearTimeout(existing);
+  setDocStatus('未保存…', '');
+  const timer = setTimeout(() => {
+    docDraftTimers.delete(key);
+    const entry = blockInputs.get(key);
+    if (!entry) return;
+    saveBlock(docId, blockId, { title: entry.titleInput.value, markdown: entry.mdInput.value });
+  }, delay);
+  docDraftTimers.set(key, timer);
+}
+
+async function saveBlock(docId, blockId, values) {
+  const doc = documents[docId];
+  const block = doc && doc.blocks && doc.blocks[blockId];
+  if (!block) return;
+  const params = {
+    documentId: docId,
+    blockId,
+    baseBlockRevision: block.revision,
+    baseContentHash: block.contentHash,
+  };
+  let changed = false;
+  if (typeof values.title === 'string' && values.title !== block.title) {
+    params.title = values.title; changed = true;
+  }
+  if (typeof values.markdown === 'string' && values.markdown !== block.markdown) {
+    params.markdown = values.markdown; changed = true;
+  }
+  if (!changed) {
+    clearDraft(docId, blockId);
+    setDocStatus(`已保存 · rev ${workspaceRevision}`, '');
+    return;
+  }
+  const before = { title: block.title, markdown: block.markdown };
+  setDocStatus('保存中…', '');
+  try {
+    await runOperation('block.update', params);
+    await refreshWorkspaceMeta();
+    pushDocUndo({ kind: 'update', docId, blockId, before });
+    clearDraft(docId, blockId);
+    const entry = blockInputs.get(`${docId}:${blockId}`);
+    if (entry) entry.statusEl.textContent = '已保存';
+    setDocStatus(`已保存 · rev ${workspaceRevision}`, '');
+  } catch (error) {
+    setDocStatus(`保存失败：${error.message}`, 'error');
+  }
+}
+
+/* ---------- 文档与块操作 ---------- */
+async function createDocument() {
+  const title = ((window.prompt('新文档标题', '调研文档') || '').trim().slice(0, 200)) || '调研文档';
+  setDocStatus('保存中…', '');
+  try {
+    const result = await runOperation('document.create', { title });
+    await refreshWorkspaceMeta();
+    selectedDocId = result.result.documentId;
+    renderDocPanel();
+    setDocStatus(`已保存 · rev ${workspaceRevision}`, '');
+  } catch (error) {
+    setDocStatus(`创建失败：${error.message}`, 'error');
+  }
+}
+
+async function renameDocument(title) {
+  const doc = documents[selectedDocId];
+  if (!doc) return;
+  const next = (String(title || '').trim().slice(0, 200)) || '未命名文档';
+  if (next === doc.title) return;
+  setDocStatus('保存中…', '');
+  try {
+    await runOperation('document.update', { documentId: doc.id, title: next });
+    await refreshWorkspaceMeta();
+    renderDocPanel();
+    setDocStatus(`已保存 · rev ${workspaceRevision}`, '');
+  } catch (error) {
+    setDocStatus(`重命名失败：${error.message}`, 'error');
+  }
+}
+
+async function addBlock() {
+  const docId = selectedDocId;
+  if (!docId) return;
+  setDocStatus('保存中…', '');
+  try {
+    const result = await runOperation('block.add', {
+      documentId: docId,
+      block: { type: 'markdown', title: '新段落', markdown: '' },
+    });
+    const blockId = result.result.blockId;
+    await refreshWorkspaceMeta();
+    pushDocUndo({ kind: 'add', docId, blockId });
+    renderDocEditor();
+    setDocStatus(`已保存 · rev ${workspaceRevision}`, '');
+    const entry = blockInputs.get(`${docId}:${blockId}`);
+    if (entry) entry.mdInput.focus();
+  } catch (error) {
+    setDocStatus(`新增失败：${error.message}`, 'error');
+  }
+}
+
+async function moveBlock(docId, blockId, index) {
+  const doc = documents[docId];
+  if (!doc) return;
+  const from = (doc.blockOrder || []).indexOf(blockId);
+  if (from < 0 || index === from || index < 0 || index >= (doc.blockOrder || []).length) return;
+  setDocStatus('保存中…', '');
+  try {
+    await runOperation('block.move', { documentId: docId, blockId, index });
+    await refreshWorkspaceMeta();
+    pushDocUndo({ kind: 'move', docId, blockId, from });
+    renderDocEditor();
+    setDocStatus(`已保存 · rev ${workspaceRevision}`, '');
+  } catch (error) {
+    setDocStatus(`移动失败：${error.message}`, 'error');
+  }
+}
+
+async function removeBlock(docId, blockId) {
+  const doc = documents[docId];
+  const block = doc && doc.blocks && doc.blocks[blockId];
+  if (!block) return;
+  const snapshot = {
+    type: block.type,
+    title: block.title,
+    markdown: block.markdown,
+    sourceRefs: block.sourceRefs || [],
+    evidenceIds: block.evidenceIds || [],
+  };
+  if (block.type === 'figure' && block.assetRef) snapshot.assetRef = block.assetRef;
+  setDocStatus('保存中…', '');
+  try {
+    await runOperation('block.remove', { documentId: docId, blockId });
+    await refreshWorkspaceMeta();
+    pushDocUndo({ kind: 'remove', docId, block: snapshot });
+    clearDraft(docId, blockId);
+    renderDocEditor();
+    setDocStatus(`已保存 · rev ${workspaceRevision}`, '');
+  } catch (error) {
+    setDocStatus(`移出失败：${error.message}`, 'error');
+  }
+}
+
+async function undoDocument() {
+  const entry = docUndoStack.pop();
+  if (!entry) return;
+  updateDocUndoBtn();
+  setDocStatus('保存中…', '');
+  try {
+    if (entry.kind === 'update') {
+      const doc = documents[entry.docId];
+      const block = doc && doc.blocks && doc.blocks[entry.blockId];
+      if (!block) { setDocStatus('目标块已不存在，无法撤销。', 'error'); return; }
+      await runOperation('block.update', {
+        documentId: entry.docId,
+        blockId: entry.blockId,
+        baseBlockRevision: block.revision,
+        baseContentHash: block.contentHash,
+        title: entry.before.title,
+        markdown: entry.before.markdown,
+      });
+    } else if (entry.kind === 'add') {
+      await runOperation('block.remove', { documentId: entry.docId, blockId: entry.blockId });
+      clearDraft(entry.docId, entry.blockId);
+    } else if (entry.kind === 'remove') {
+      await runOperation('block.add', { documentId: entry.docId, block: entry.block });
+    } else if (entry.kind === 'move') {
+      await runOperation('block.move', { documentId: entry.docId, blockId: entry.blockId, index: entry.from });
+    }
+    await refreshWorkspaceMeta();
+    renderDocEditor();
+    setDocStatus(`已撤销 · rev ${workspaceRevision}`, '');
+  } catch (error) {
+    setDocStatus(`撤销失败：${error.message}`, 'error');
+  }
+}
+
+const MAX_DOC_BLOCK_CHARS = 90000;
+async function addAnswerToDocument() {
+  const selection = localSelection && localSelection.text ? localSelection : null;
+  const sourceNodeId = (selection && selection.sourceNodeId) || selectedId;
+  const node = nodes[sourceNodeId];
+  if (!node) return;
+  if (!selectedDocId && docList().length) selectedDocId = docList()[0].id;
+  if (!selectedDocId) {
+    openDocPanel();
+    setDocStatus('请先新建一个文档，再加入内容。', 'error');
+    return;
+  }
+  let markdown = selection ? selection.text : (node.content || '');
+  if (!markdown.trim()) {
+    setDocStatus('当前没有可加入的内容。', 'error');
+    return;
+  }
+  if (markdown.length > MAX_DOC_BLOCK_CHARS) {
+    markdown = markdown.slice(0, MAX_DOC_BLOCK_CHARS) + '\n\n[…内容过长，已截断…]';
+  }
+  const title = String(selection ? `摘录：${node.title || ''}` : (node.title || '回答')).slice(0, 200);
+  setDocStatus('保存中…', '');
+  try {
+    await runOperation('block.add', {
+      documentId: selectedDocId,
+      block: {
+        type: 'markdown',
+        title,
+        markdown,
+        sourceRefs: [{ nodeId: sourceNodeId }],
+      },
+    });
+    await refreshWorkspaceMeta();
+    if (!docPanelIsOpen()) openDocPanel();
+    else renderDocPanel();
+    setDocStatus(`已加入文档 · rev ${workspaceRevision}`, '');
+  } catch (error) {
+    setDocStatus(`加入失败：${error.message}`, 'error');
+  }
+}
 
 /* ===================== 启动 ===================== */
 if (window.marked) marked.use({ breaks: false, gfm: true });  // 单换行归入同一段；空行仍分段，继续支持 GFM 表格等
