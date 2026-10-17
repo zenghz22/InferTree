@@ -109,6 +109,18 @@ class FrontendDocumentScopeTests(unittest.TestCase):
         fn = self._fn("openPdfAtPage")
         self.assertIn("pdfViewState = { paperId: selectedPaper.paperId, page: pageNumber }", fn)
 
+    def test_figure_block_entry_binds_an_explicit_visual(self) -> None:
+        self.assertIn('id="figurePick"', self.source)
+        self.assertIn('id="addFigureBtn"', self.source)
+        fn = self._fn("addFigureBlock")
+        self.assertIn("runOperation('evidence.upsert'", fn)
+        self.assertIn("runOperation('block.add'", fn)
+        self.assertLess(fn.index("evidence.upsert"), fn.index("block.add"))
+        self.assertIn("const visualId = artifact.id;", fn)
+        self.assertIn("assetRef: { paperId, visualId", fn)
+        self.assertIn("type: 'figure'", fn)
+        self.assertIn("visualId,", fn)
+
     def test_blocks_offer_ask_and_attach_actions(self) -> None:
         fn = self._fn("renderBlockElement")
         self.assertIn("askAboutBlock(doc.id, block.id)", fn)

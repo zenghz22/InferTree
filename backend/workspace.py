@@ -988,6 +988,32 @@ def _execute_operation(
         block = doc["blocks"].get(block_id)
         if block is None:
             raise HTTPException(status_code=422, detail="Block does not exist.")
+        # 迟到的模型响应：提案必须基于模型实际看到的那个版本，
+        # 否则接受时会用旧正文覆盖用户刚做的新编辑。
+        expected_hash = params.get("expectedBaseContentHash")
+        if expected_hash is not None:
+            if not isinstance(expected_hash, str) or expected_hash != block["contentHash"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Block changed while the proposal was being drafted; "
+                        "re-read the block before proposing again."
+                    ),
+                )
+        expected_revision = params.get("expectedBaseBlockRevision")
+        if expected_revision is not None:
+            if (
+                not isinstance(expected_revision, int)
+                or isinstance(expected_revision, bool)
+                or expected_revision != block["revision"]
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Block changed while the proposal was being drafted; "
+                        "re-read the block before proposing again."
+                    ),
+                )
         replacement_markdown = params.get("replacementMarkdown")
         if not isinstance(replacement_markdown, str) or len(replacement_markdown) > MAX_BLOCK_MARKDOWN_CHARS:
             raise HTTPException(status_code=422, detail="proposal.create replacementMarkdown is invalid.")
@@ -1187,3 +1213,45 @@ def apply_operation(workspace_id: str, payload: Any) -> Dict[str, Any]:
         "current_revision": new_revision,
         "result": result,
     }
+
+
+def _agent_operation_id(op: str, params: Mapping[str, Any]) -> str:
+    digest = _sha256(_stable_json({"op": op, **params}))
+    return f"agent_{digest[:40]}"
+
+
+def run_server_operation(
+    workspace_id: str, op: str, params: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Run an operation on behalf of a server-side actor (an agent tool).
+
+    The operationId is deterministic, so a repeated identical tool call is deduped
+    instead of creating a second proposal. The revision is read immediately before
+    the call and retried once if a concurrent human write bumped it; a baseline
+    conflict is never retried.
+    """
+    if op not in ALLOWED_OPS:
+        raise HTTPException(status_code=422, detail="Unknown operation.")
+    operation_id = _agent_operation_id(op, params)
+    last_error: Any = None
+    for _ in range(2):
+        workspace = load_workspace(workspace_id)
+        if not workspace.get("exists"):
+            raise HTTPException(status_code=422, detail="Workspace does not exist.")
+        revision = int(workspace.get("revision") or 0)
+        try:
+            return apply_operation(
+                workspace_id,
+                {"operationId": operation_id, "baseRevision": revision, "op": op, **params},
+            )
+        except HTTPException as exc:
+            detail = exc.detail
+            is_revision_race = (
+                exc.status_code == 409
+                and isinstance(detail, Mapping)
+                and detail.get("message") == "Workspace revision conflict."
+            )
+            if not is_revision_race:
+                raise
+            last_error = exc
+    raise last_error

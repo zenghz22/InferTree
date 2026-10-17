@@ -201,6 +201,27 @@ window.MathJax = {
   .doc-scope { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     border: 1px solid var(--accent); border-radius: 8px; padding: 3px 8px; margin-top: 4px; }
   .doc-scope[hidden] { display: none; }
+  #proposalOverlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center;
+    justify-content: center; background: rgba(0, 0, 0, .45); padding: 20px; }
+  #proposalOverlay[hidden] { display: none; }
+  .proposal-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    width: min(900px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .35); }
+  .proposal-head { display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .proposal-card > .hint { padding: 6px 12px 0; }
+  .proposal-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    padding: 8px 12px; overflow: auto; }
+  .proposal-cols pre { white-space: pre-wrap; word-break: break-word; font-size: 12.5px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px; margin: 4px 0 0; }
+  .proposal-label { font-size: 11.5px; color: var(--muted); }
+  #proposalNext { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px; margin-top: 4px; font-size: 13px; }
+  .proposal-actions { display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px 12px; border-top: 1px solid var(--border); }
+  .doc-proposal { border: 1px solid var(--accent); border-radius: 10px; padding: 1px 8px;
+    font-size: 11.5px; background: var(--accent-faint); cursor: pointer; color: var(--accent); }
   .doc-block-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .doc-source { font-size: 11px; padding: 2px 7px; border-radius: 11px; }
   .doc-draft-restore { font-size: 11px; padding: 2px 7px; border-radius: 11px;
@@ -457,10 +478,37 @@ window.MathJax = {
       <div id="docBlocks"></div>
       <div id="docActions">
         <button id="addBlockBtn">＋ 段落</button>
+        <select id="figurePick" title="当前回答中已渲染的图表"></select>
+        <button id="addFigureBtn">＋ 图表块</button>
         <span class="hint" id="docHint">编辑内容块会自动保存；保存失败会在右上角提示。</span>
       </div>
     </div>
   </section>
+
+  <div id="proposalOverlay" hidden>
+    <div class="proposal-card" role="dialog" aria-modal="true" aria-labelledby="proposalHeading">
+      <div class="proposal-head">
+        <b id="proposalHeading">AI 修改提案</b>
+        <button type="button" id="proposalCloseBtn" title="关闭（不做决定，正文不变）">×</button>
+      </div>
+      <div class="hint" id="proposalMeta"></div>
+      <div class="proposal-cols">
+        <div>
+          <div class="proposal-label">当前正文（未改动）</div>
+          <pre id="proposalCurrent"></pre>
+        </div>
+        <div>
+          <div class="proposal-label">提案正文（接受后才会写入）</div>
+          <div id="proposalNext" class="md"></div>
+        </div>
+      </div>
+      <div class="proposal-actions">
+        <button type="button" id="proposalAcceptBtn" class="primary">接受</button>
+        <button type="button" id="proposalRejectBtn">拒绝</button>
+        <span class="hint" id="proposalStatus"></span>
+      </div>
+    </div>
+  </div>
 
   <div id="resizer"></div>
 
@@ -1541,7 +1589,9 @@ function renderDocScopeBar() {
   title.textContent = '文档作用域';
   const preview = document.createElement('span');
   preview.className = 'local-preview';
-  preview.textContent = `文档《${doc?.title || '?'}》/ 块「${block?.title || '整篇'}」· 仅发送本块正文与证据`;
+  const modeLabel = pendingDocScope.mode === 'propose_edit'
+    ? 'AI 修改模式（只提议，不改正文）' : '提问模式';
+  preview.textContent = `${modeLabel} · 文档《${doc?.title || '?'}》/ 块「${block?.title || '整篇'}」· 仅发送本块正文与证据`;
   const clear = document.createElement('button');
   clear.type = 'button';
   clear.className = 'clear-local';
@@ -2595,6 +2645,7 @@ async function runAnswer(node) {
     setBusy(false); controller = null;
     renderTree();                                    // 去掉 spinner / streaming 样式
     if (selectedId === node.id) renderConvo();       // 拿到稳定的最终 Markdown 渲染
+    if (node.documentScope) refreshProposalsAfterAnswer();
   }
 }
 function setBusy(b) {
@@ -2884,15 +2935,24 @@ $('closeDocBtn').addEventListener('click', closeDocPanel);
 $('newDocBtn').addEventListener('click', createDocument);
 $('docUndoBtn').addEventListener('click', undoDocument);
 $('addBlockBtn').addEventListener('click', addBlock);
+$('addFigureBtn').addEventListener('click', addFigureBlock);
 $('addToDocBtn').addEventListener('click', addAnswerToDocument);
 $('docTitleInput').addEventListener('change', () => renameDocument($('docTitleInput').value));
 $('docTitleInput').addEventListener('keydown', (event) => {
   if (event.key === 'Enter') { event.preventDefault(); $('docTitleInput').blur(); }
 });
+$('proposalCloseBtn').addEventListener('click', closeProposalPreview);
+$('proposalAcceptBtn').addEventListener('click', acceptProposal);
+$('proposalRejectBtn').addEventListener('click', rejectProposal);
+$('proposalOverlay').addEventListener('click', (event) => {
+  if (event.target === $('proposalOverlay')) closeProposalPreview();
+});
 
 /* ===================== 调研文档（P2） ===================== */
 let documents = {};
 let evidenceById = {};
+let proposals = {};
+let proposalOpenId = null;
 let selectedDocId = null;
 let docUndoStack = [];
 let operationSeq = 0;
@@ -2951,6 +3011,8 @@ function loadDocumentsFromState(state) {
   const next = state && typeof state.documents === 'object' && state.documents ? state.documents : {};
   documents = next;
   evidenceById = state && typeof state.evidence === 'object' && state.evidence ? state.evidence : {};
+  proposals = state && typeof state.proposals === 'object' && state.proposals ? state.proposals : {};
+  if (proposalOpenId && !proposals[proposalOpenId]) proposalOpenId = null;
   if (selectedDocId && !documents[selectedDocId]) selectedDocId = null;
   if (!selectedDocId && docList().length) selectedDocId = docList()[0].id;
 }
@@ -3033,8 +3095,73 @@ function updateDocUndoBtn() {
 /* ---------- 渲染 ---------- */
 function renderDocPanel() {
   if (!$('docPanel')) return;
+  renderFigurePicker();
   renderDocList();
   renderDocEditor();
+}
+
+// P3/P4：把当前回答里已渲染的图表变成图块（显式绑定 paperId + visualId）。
+function renderFigurePicker() {
+  const pick = $('figurePick');
+  if (!pick) return;
+  const node = nodes[selectedId];
+  const artifacts = node && Array.isArray(node.artifacts) ? node.artifacts : [];
+  pick.replaceChildren();
+  if (!artifacts.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = '（当前回答没有图表）';
+    pick.appendChild(option);
+    pick.disabled = true;
+    return;
+  }
+  pick.disabled = false;
+  artifacts.forEach((artifact, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = `${artifact.label || artifact.id || '图表'}（第 ${artifact.page || '?'} 页）`;
+    pick.appendChild(option);
+  });
+}
+
+async function addFigureBlock() {
+  const node = nodes[selectedId];
+  const artifacts = node && Array.isArray(node.artifacts) ? node.artifacts : [];
+  const artifact = artifacts[Number($('figurePick')?.value)];
+  if (!artifact) { setDocStatus('请先在对话里渲染图表。', 'error'); return; }
+  const paperId = node.paper?.paperId || paperForNode(node.id)?.paperId;
+  if (!paperId) { setDocStatus('该图表没有关联论文，无法加入文档。', 'error'); return; }
+  const visualId = artifact.id;
+  if (!visualId) { setDocStatus('图表缺少 visualId，无法绑定。', 'error'); return; }
+  if (!selectedDocId) { openDocPanel(); setDocStatus('请先新建一个文档。', 'error'); return; }
+  setDocStatus('保存中…', '');
+  try {
+    const created = await runOperation('evidence.upsert', {
+      paperId,
+      sourceType: artifact.type === 'table' ? 'table' : 'figure',
+      page: artifact.page || 1,
+      visualId,
+      quote: String(artifact.caption || '').slice(0, 2000),
+      assetRef: { paperId, visualId, url: artifact.url || '' },
+      locatorStatus: 'located',
+    });
+    const evidenceId = created.result.evidenceId;
+    await runOperation('block.add', {
+      documentId: selectedDocId,
+      block: {
+        type: 'figure',
+        title: String(artifact.label || '图表').slice(0, 200),
+        markdown: String(artifact.caption || '').slice(0, MAX_DOC_BLOCK_CHARS),
+        assetRef: { paperId, visualId, url: artifact.url || '' },
+        evidenceIds: [evidenceId],
+      },
+    });
+    await refreshWorkspaceMeta();
+    renderDocPanel();
+    setDocStatus('已加入图表块', 'ok');
+  } catch (error) {
+    setDocStatus(`加入图表失败：${error.message}`, 'error');
+  }
 }
 
 function renderDocList() {
@@ -3254,6 +3381,25 @@ function renderBlockElement(doc, block, index, total) {
   ask.addEventListener('click', () => askAboutBlock(doc.id, block.id));
   footer.appendChild(ask);
 
+  const revise = document.createElement('button');
+  revise.type = 'button';
+  revise.className = 'doc-revise';
+  revise.textContent = '✎ AI 修改';
+  revise.title = '让 agent 针对本块提出修改提案（接受后才会改正文）';
+  revise.addEventListener('click', () => requestBlockRevision(doc.id, block.id));
+  footer.appendChild(revise);
+
+  const pendingProposals = proposalsForBlock(block.id);
+  if (pendingProposals.length) {
+    const badge = document.createElement('button');
+    badge.type = 'button';
+    badge.className = 'doc-proposal';
+    badge.textContent = `AI 提案 ×${pendingProposals.length} 待确认`;
+    badge.title = '查看提案并决定是否写入正文';
+    badge.addEventListener('click', () => openProposalPreview(pendingProposals[0].id));
+    footer.appendChild(badge);
+  }
+
   if (footer.childNodes.length) wrap.appendChild(footer);
 
   blockInputs.set(key, { titleInput, mdInput, statusEl });
@@ -3328,6 +3474,120 @@ function askAboutBlock(docId, blockId) {
     blockId,
     mode: 'followup',
     paperId: paperIds.length === 1 ? paperIds[0] : null,
+  });
+}
+
+/* ---------- P4：提案审阅 ---------- */
+function proposalsForBlock(blockId) {
+  return Object.values(proposals).filter(
+    item => item && item.blockId === blockId && item.status === 'pending',
+  );
+}
+
+function renderProposalOverlay() {
+  const overlay = $('proposalOverlay');
+  if (!overlay) return;
+  const proposal = proposalOpenId ? proposals[proposalOpenId] : null;
+  if (!proposal) { overlay.hidden = true; return; }
+  const doc = documents[proposal.documentId];
+  const block = doc && doc.blocks ? doc.blocks[proposal.blockId] : null;
+  overlay.hidden = false;
+  $('proposalMeta').textContent = [
+    `文档《${doc?.title || '?'}》/ 块「${block?.title || '?'}」`,
+    `提案基线：块版本 ${proposal.baseBlockRevision}`,
+    proposal.explanation ? `说明：${proposal.explanation}` : '',
+  ].filter(Boolean).join(' · ');
+  $('proposalCurrent').textContent = block ? (block.markdown || '') : '（块已不存在）';
+  $('proposalNext').innerHTML = renderMd(proposal.replacementMarkdown || '');
+  const pending = proposal.status === 'pending';
+  $('proposalAcceptBtn').disabled = !pending;
+  $('proposalRejectBtn').disabled = !pending;
+  if (!pending) $('proposalStatus').textContent = `该提案状态：${proposal.status}`;
+}
+
+function openProposalPreview(proposalId) {
+  proposalOpenId = proposalId;
+  $('proposalStatus').textContent = '';
+  renderProposalOverlay();
+}
+
+function closeProposalPreview() {
+  proposalOpenId = null;
+  renderProposalOverlay();
+}
+
+async function acceptProposal() {
+  const proposal = proposals[proposalOpenId];
+  if (!proposal || proposal.status !== 'pending') return;
+  const doc = documents[proposal.documentId];
+  const block = doc && doc.blocks ? doc.blocks[proposal.blockId] : null;
+  if (!doc || !block) { $('proposalStatus').textContent = '块已不存在，无法接受。'; return; }
+  pushDocUndo({
+    kind: 'update', docId: doc.id, blockId: block.id,
+    before: { title: block.title, markdown: block.markdown },
+  });
+  $('proposalStatus').textContent = '提交中…';
+  $('proposalAcceptBtn').disabled = true;
+  try {
+    await runOperation('proposal.accept', { proposalId: proposal.id });
+    await refreshWorkspaceMeta();
+    closeProposalPreview();
+    renderDocPanel();
+    setDocStatus('已采纳提案', 'ok');
+  } catch (error) {
+    if (error.code === 'proposal_conflicted') {
+      $('proposalStatus').textContent = '基线已变化：块在你确认前被改过，提案已标记为冲突。';
+      await refreshWorkspaceMeta();
+      renderDocPanel();
+      renderProposalOverlay();
+    } else {
+      $('proposalStatus').textContent = `接受失败：${error.message}`;
+      $('proposalAcceptBtn').disabled = false;
+    }
+  }
+}
+
+async function rejectProposal() {
+  const proposal = proposals[proposalOpenId];
+  if (!proposal || proposal.status !== 'pending') return;
+  $('proposalStatus').textContent = '提交中…';
+  $('proposalRejectBtn').disabled = true;
+  try {
+    await runOperation('proposal.reject', { proposalId: proposal.id });
+    await refreshWorkspaceMeta();
+    closeProposalPreview();
+    renderDocPanel();
+    setDocStatus('已拒绝提案', 'ok');
+  } catch (error) {
+    $('proposalStatus').textContent = `拒绝失败：${error.message}`;
+    $('proposalRejectBtn').disabled = false;
+  }
+}
+
+// 进入修改模式：agent 只能提议，不能直接改正文。
+function requestBlockRevision(docId, blockId) {
+  const doc = documents[docId];
+  const block = doc && doc.blocks ? doc.blocks[blockId] : null;
+  if (!doc || !block) return;
+  if (!apiReady()) return;
+  if (streamingId) { alert('已有生成任务在进行，请等待或点击“停止”'); return; }
+  const paperIds = blockPaperIds(block);
+  setPendingDocScope({
+    workspaceId: WORKSPACE_ID, documentId: docId, blockId,
+    mode: 'propose_edit',
+    paperId: paperIds.length === 1 ? paperIds[0] : null,
+  });
+  setDocStatus('已进入 AI 修改模式：在输入框说明要改什么', '');
+}
+
+// 回答结束后同步提案，但不打断正在编辑的块。
+function refreshProposalsAfterAnswer() {
+  const active = document.activeElement;
+  const editing = Boolean(active && active.closest && active.closest('#docBlocks'));
+  refreshWorkspaceMeta().then((ok) => {
+    if (!ok) return;
+    if (docPanelIsOpen() && !editing) renderDocPanel();
+    if (proposalOpenId) renderProposalOverlay();
   });
 }
 

@@ -27,7 +27,7 @@ from .skill_loader import (
     load_skill_catalog,
     load_paper_visual_extractor_skill,
 )
-from .workspace import load_workspace
+from .workspace import load_workspace, run_server_operation
 
 
 WEB_SEARCH_TOOL = {
@@ -99,7 +99,43 @@ RENDER_PAPER_VISUALS_TOOL = {
     },
 }
 
+PROPOSE_DOCUMENT_PATCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "propose_document_patch",
+        "description": (
+            "Propose a replacement for the current document block. This only creates a "
+            "pending proposal for the user to accept or reject; it never changes the "
+            "document itself. Use it at most once per request, with the complete new body."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "replacement_markdown": {
+                    "type": "string",
+                    "description": "The complete new body for the block, not a fragment.",
+                },
+                "replacement_title": {
+                    "type": "string",
+                    "description": "Optional new block title; omit to keep the current one.",
+                },
+                "explanation": {
+                    "type": "string",
+                    "description": "One or two sentences describing what changed and why.",
+                },
+                "evidence_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Existing evidence ids from this block that support the change.",
+                },
+            },
+            "required": ["replacement_markdown", "explanation"],
+        },
+    },
+}
+
 MAX_PAPER_CONTEXT_CHARS = 250_000
+
 ALLOWED_SKILLS = {"paper-search", "paper-downloader", "paper-reviewer", "paper-visual-extractor"}
 ALLOWED_SKILL_MODES = {"auto", "summary", "full-review", "focused-check", "story-lecture"}
 MAX_TOOL_ROUNDS = 8
@@ -594,6 +630,14 @@ def _document_scope_context(
         lines.append("</block_body>")
         lines.append("</block>")
 
+        if mode == "propose_edit":
+            lines.append(
+                "<editing_instructions>You are editing this block through a proposal. "
+                "Call propose_document_patch with the complete replacement body. The user "
+                "must approve it; never claim the document was updated, and never send a "
+                "partial fragment as the replacement.</editing_instructions>"
+            )
+
         anchor_quote = None
         if anchor is not None:
             if not isinstance(anchor, dict):
@@ -678,6 +722,8 @@ def _document_scope_context(
         "block_id": block_id,
         "estimated_chars": len(text),
         "evidence_count": len(block.get("evidenceIds", [])) if block else 0,
+        "block_revision": block["revision"] if block else None,
+        "block_content_hash": block["contentHash"] if block else None,
     }
     return text, stats
 
@@ -829,6 +875,15 @@ def _upstream_request(
         tools.extend([LIST_PAPER_VISUALS_TOOL, RENDER_PAPER_VISUALS_TOOL])
     if include_tools and payload.get("skill"):
         tools.append(UI_ACTION_TOOL)
+    # 文档修改提案不需要用户先选 skill：有 propose_edit 作用域就提供工具。
+    scope = payload.get("document_scope")
+    if (
+        include_tools
+        and isinstance(scope, dict)
+        and scope.get("mode") == "propose_edit"
+        and isinstance(scope.get("blockId"), str)
+    ):
+        tools.append(PROPOSE_DOCUMENT_PATCH_TOOL)
     if tools:
         request["tools"] = tools
         request["tool_choice"] = "auto"
@@ -1023,6 +1078,7 @@ async def _execute_agent_tool(
     arguments: Dict[str, Any],
     payload: Dict[str, Any],
     config: AgentConfig,
+    document_baseline: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if tool_name == "activate_skill":
         skill_name = str(arguments.get("skill", "")).strip()
@@ -1150,6 +1206,79 @@ async def _execute_agent_tool(
             "message": f"已截取 {len(visuals)} 个论文图表",
             "detail": {"rendered_count": len(visuals)},
             "artifacts": visuals,
+        }
+    if tool_name == "propose_document_patch":
+        scope = payload.get("document_scope")
+
+        def proposal_failed(message: str, detail: Any = None) -> Dict[str, Any]:
+            return {
+                "content": json.dumps({"error": message}, ensure_ascii=False),
+                "state": "failed",
+                "message": message,
+                "detail": {"reason": detail} if detail is not None else {},
+                "artifacts": [],
+            }
+
+        if not isinstance(scope, dict) or scope.get("mode") != "propose_edit":
+            return proposal_failed("提案工具仅在文档修改模式下可用。")
+        workspace_id = scope.get("workspaceId")
+        document_id = scope.get("documentId")
+        block_id = scope.get("blockId")
+        if not all(
+            isinstance(value, str) and value
+            for value in (workspace_id, document_id, block_id)
+        ):
+            return proposal_failed("文档作用域缺少 workspace/document/block 标识。")
+        replacement = arguments.get("replacement_markdown")
+        if not isinstance(replacement, str) or not replacement.strip():
+            return proposal_failed("replacement_markdown 不能为空。")
+        params: Dict[str, Any] = {
+            "documentId": document_id,
+            "blockId": block_id,
+            "replacementMarkdown": replacement,
+            "explanation": str(arguments.get("explanation") or "").strip(),
+        }
+        replacement_title = arguments.get("replacement_title")
+        if isinstance(replacement_title, str) and replacement_title.strip():
+            params["replacementTitle"] = replacement_title.strip()
+        evidence_ids = arguments.get("evidence_ids")
+        if isinstance(evidence_ids, list):
+            params["evidenceIds"] = [value for value in evidence_ids if isinstance(value, str)]
+        # 以模型实际看到的那一版为基线：块已变则拒绝建提案，避免旧正文覆盖新编辑。
+        baseline = document_baseline or {}
+        if isinstance(baseline.get("block_content_hash"), str):
+            params["expectedBaseContentHash"] = baseline["block_content_hash"]
+        if isinstance(baseline.get("block_revision"), int):
+            params["expectedBaseBlockRevision"] = baseline["block_revision"]
+        try:
+            outcome = run_server_operation(workspace_id, "proposal.create", params)
+        except HTTPException as exc:
+            return proposal_failed(f"提案未创建：{exc.detail}", exc.status_code)
+        result = outcome.get("result") or {}
+        proposal_id = result.get("proposalId")
+        return {
+            "content": json.dumps(
+                {
+                    "proposal_id": proposal_id,
+                    "status": "pending",
+                    "document_changed": False,
+                    "note": (
+                        "The user must accept or reject this proposal. "
+                        "The document is unchanged; do not claim it was updated."
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+            "state": "completed",
+            "message": f"为块 {str(block_id)[:8]} 提出修改",
+            "detail": {
+                "proposalId": proposal_id,
+                "documentId": document_id,
+                "blockId": block_id,
+                "duplicate": bool(outcome.get("duplicate")),
+            },
+            "artifacts": [],
+            "proposal_id": proposal_id,
         }
     if tool_name == "ui_action":
         return _build_ui_action(arguments)
@@ -1403,7 +1532,8 @@ async def run_agent(payload: Dict[str, Any], config: AgentConfig) -> Response:
                         yield _sse_activity(tool_span, "started", f"正在{tool_span.title}")
                         try:
                             outcome = await _execute_agent_tool(
-                                tool_name, arguments, payload, config
+                                tool_name, arguments, payload, config,
+                                document_baseline=document_scope_stats,
                             )
                             result = str(outcome["content"])
                             ui_payload = outcome.get("ui")
